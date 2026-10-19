@@ -157,7 +157,8 @@ export function SettingsScreen() {
           <button class="btn danger block mt12" onClick={() => { if (confirm(`Nullstille alt og lage nye demodata ut fra ${fmtDate(today)}?`)) { resetDemo(today); nav.toast('Demodata er nullstilt'); } }}>Nullstill demodata</button>
         </div>
       </Section>
-      <div class="muted tiny mt16">Kontrollplan · prototype. Kart uten kartfliser, kjøretider er anslag, e-post sendes via e-postappen.</div>
+      <div class="muted tiny mt16">Versjon: {__APP_VERSION__}</div>
+      <div class="muted tiny">Kontrollplan · prototype. Kart uten kartfliser, kjøretider er anslag, e-post sendes via e-postappen.</div>
     </div>
   );
 }

@@ -3,8 +3,11 @@ import { join } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 
+/** Bump this when a stuck phone must drop the previous service worker. */
+const APP_VERSION = '2026-10-19-r7';
+
 /** Versjonert service worker. HTML hentes på nytt, gamle cacher slettes, så /Gasskontroll/ ikke blir stående på et gammelt skall. */
-function serviceWorker(): Plugin {
+function serviceWorker(version: string): Plugin {
   return {
     name: 'kontrollplan-sw',
     apply: 'build',
@@ -19,7 +22,6 @@ function serviceWorker(): Plugin {
         }
       };
       walk(dist, './');
-      const version = new Date().toISOString();
       const body = `/* Kontrollplan ${version} */
 const VERSION = ${JSON.stringify(version)};
 const CACHE = 'kontrollplan-' + VERSION;
@@ -38,6 +40,17 @@ self.addEventListener('activate', (event) => {
     const keys = await caches.keys();
     await Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)));
     await self.clients.claim();
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      client.postMessage({ type: 'RELOAD' });
+      try {
+        const next = new URL(client.url);
+        if (next.searchParams.get('v') !== VERSION) {
+          next.searchParams.set('v', VERSION);
+          await client.navigate(next.toString());
+        }
+      } catch { /* eldre nettleser: siden laster på nytt via postMessage */ }
+    }
   })());
 });
 
@@ -52,9 +65,11 @@ self.addEventListener('fetch', (event) => {
   if (isDocument) {
     event.respondWith((async () => {
       try {
-        const fresh = await fetch(req);
-        const cache = await caches.open(CACHE);
-        await cache.put(shell, fresh.clone());
+        const fresh = await fetch(req, { cache: 'no-store' });
+        if (fresh && fresh.ok) {
+          const cache = await caches.open(CACHE);
+          await cache.put(shell, fresh.clone());
+        }
         return fresh;
       } catch {
         return (await caches.match(req)) || (await caches.match(shell)) || Response.error();
@@ -79,7 +94,8 @@ self.addEventListener('fetch', (event) => {
 
 export default defineConfig({
   base: './',
-  plugins: [preact(), serviceWorker()],
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
+  plugins: [preact(), serviceWorker(APP_VERSION)],
   build: { target: 'es2020', chunkSizeWarningLimit: 1500 },
   test: { environment: 'node' },
 } as any);
