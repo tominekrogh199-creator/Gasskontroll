@@ -1,0 +1,16 @@
+{
+  "name": "Kontrollplan",
+  "short_name": "Kontrollplan",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f4f2",
+  "theme_color": "#f4f4f2",
+  "description": "Kjøredag, uke og kart for kontroll av gassanlegg.",
+  "lang": "nb",
+  "icons": [
+    { "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}
