@@ -1,6 +1,6 @@
 // Akseptansetester mot domenelogikken (samme kode som appen bruker).
 import { describe, it, expect } from 'vitest';
-import { buildDemo, defaultSettings } from '../src/data/demo';
+import { buildDemo, defaultSettings, migrateDriveRadius } from '../src/data/demo';
 import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf, refreshDay, dayHasRoom, earliestPlanDate, earliestOverdueDate, durationOf, moveStopBy, setDayOrder, optimizePreview, applyOptimizedOrder, removeStop, buildQuickRoute, driveFromBase } from '../src/domain/planner';
 import { addDays, addQuarters, firstWorkdayOfQuarter, isOverdue, quarterOf, fmtDateWeekday, minutesToClock, clockToMinutes, compareQuarter, suggestedNextDue, quarterEnd } from '../src/domain/dates';
 import { areaName, atRiskControls, homeStats, quarterWork, sortedDays } from '../src/domain/selectors';
@@ -370,6 +370,18 @@ describe('Frist i fare', () => {
     const late = st.controls.find((c) => !onDay.has(c.id) && c.status !== 'utfort' && isOverdue(c.due, today));
     expect(late).toBeTruthy();
     expect(list.some((c) => c.id === late!.id)).toBe(true);
+  });
+});
+
+describe('Kjøreradius', () => {
+  it('standard er to timer', () => {
+    expect(defaultSettings().maxDriveMin).toBe(120);
+  });
+  it('gammel standard 150 blir 120, en verdi brukeren har satt blir stående', () => {
+    expect(migrateDriveRadius({ ...defaultSettings(), maxDriveMin: 150 }).maxDriveMin).toBe(120);
+    expect(migrateDriveRadius({ ...defaultSettings(), maxDriveMin: 150, driveRadiusCustom: true }).maxDriveMin).toBe(150);
+    expect(migrateDriveRadius({ ...defaultSettings(), maxDriveMin: 90 }).maxDriveMin).toBe(90);
+    expect(migrateDriveRadius(defaultSettings()).maxDriveMin).toBe(120);
   });
 });
 

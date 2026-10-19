@@ -10,7 +10,7 @@ npm install
 npm run dev      # utviklingsserver, åpne adressen på iPhone i samme nett
 npm run build    # typesjekk + produksjonsbygg til dist/
 npm run preview  # server dist/
-npm test         # 25 tester (vitest)
+npm test         # 27 tester (vitest)
 ```
 
 Appen starter med 60 fiktive anlegg regnet ut fra dagens dato. Testdato og «Nullstill demodata» ligger i

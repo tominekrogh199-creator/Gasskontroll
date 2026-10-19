@@ -7,6 +7,14 @@ import { newControl } from '../domain/controls';
 import { refreshDay } from '../domain/planner';
 import { PLACES } from '../domain/geo';
 
+/** Gammel innebygd standard. Bare denne verdien flyttes til 120, og bare når brukeren ikke har valgt den selv. */
+export const LEGACY_DRIVE_RADIUS_MIN = 150;
+
+export function migrateDriveRadius<T extends { maxDriveMin: number; driveRadiusCustom?: boolean }>(settings: T): T {
+  if (settings.driveRadiusCustom || settings.maxDriveMin !== LEGACY_DRIVE_RADIUS_MIN) return settings;
+  return { ...settings, maxDriveMin: 120 };
+}
+
 export function defaultSettings(): Settings {
   return {
     baseName: 'Hokksund',
@@ -17,7 +25,7 @@ export function defaultSettings(): Settings {
     lunchMin: 30,
     controlMin: 90,
     maxPerDay: 4,
-    maxDriveMin: 150,
+    maxDriveMin: 120,
     preNoticeDays: 21,
     reminderWorkdays: 3,
     chaseDays: 7,

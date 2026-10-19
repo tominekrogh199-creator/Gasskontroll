@@ -165,6 +165,8 @@ export interface Settings {
   controlMin: number;
   maxPerDay: number;
   maxDriveMin: number;
+  /** Brukeren har selv valgt kjøreradien. Uten dette blir lagret standard 150 min til 120. */
+  driveRadiusCustom?: boolean;
   preNoticeDays: number;
   reminderWorkdays: number;
   chaseDays: number;

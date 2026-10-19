@@ -1,7 +1,7 @@
 // Tilstand og varig lagring (localStorage). Eksport/import av JSON finnes i innstillinger.
 import { useEffect, useState } from 'preact/hooks';
 import type { AppState } from './domain/types';
-import { buildDemo, defaultSettings } from './data/demo';
+import { buildDemo, defaultSettings, migrateDriveRadius } from './data/demo';
 import { deviceToday } from './domain/dates';
 import { runAutomations } from './domain/notices';
 
@@ -12,7 +12,7 @@ function load(): AppState {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw) as AppState;
-      s.settings = { ...defaultSettings(), ...s.settings, templates: { ...defaultSettings().templates, ...s.settings.templates } };
+      s.settings = migrateDriveRadius({ ...defaultSettings(), ...s.settings, templates: { ...defaultSettings().templates, ...s.settings.templates } });
       s.imports = s.imports ?? [];
       return s;
     }
@@ -57,6 +57,7 @@ export function update<T>(fn: (draft: AppState) => T): T {
 }
 
 export function replaceState(next: AppState): void {
+  next.settings = migrateDriveRadius({ ...defaultSettings(), ...next.settings, templates: { ...defaultSettings().templates, ...next.settings.templates } });
   state = next;
   runAutomations(state);
   save();
