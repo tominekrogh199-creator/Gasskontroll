@@ -1,115 +1,168 @@
-import { useAppState } from '../store';
-import { Icon, Row, Section, Dot, useNav, Empty } from './components';
-import { homeStats } from '../domain/selectors';
-import { facilityOf, nextStep, todayOf } from '../domain/controls';
-import { addDays, fmtDateWeekday, fmtQ, fmtQuarter, minutesToClock, isOverdue } from '../domain/dates';
-import { dayArea, dayTimeline } from '../domain/planner';
-import { callList, lateDrafts } from '../domain/notices';
+import { useEffect, useState } from 'preact/hooks';
+import { update, useAppState } from '../store';
+import { Icon, MerButton, tap, useNav } from './components';
+import { facilityOf, findControl, primaryPhone, todayOf } from '../domain/controls';
+import { addDays, fmtDateWeekday, isWorkday, minutesToClock, nextWorkdayOnOrAfter, quarterOf } from '../domain/dates';
+import { buildQuickRoute, dayArea, dayTimeline, driveFromBase } from '../domain/planner';
+import { draftsToApprove, kindLabel, readyToSend } from '../domain/notices';
+import { areaName, homeStats, quarterWork } from '../domain/selectors';
+import type { PlanDay } from '../domain/types';
+
+function routeDateOf(state: ReturnType<typeof useAppState>, today: string): string {
+  let date = isWorkday(today, state.settings.blockedDays) ? today : nextWorkdayOnOrAfter(today, state.settings.blockedDays);
+  for (let i = 0; i < 12; i++) {
+    const day = state.days.find((d) => d.date === date);
+    if (!day?.locked && (day?.stops.length ?? 0) < state.settings.maxPerDay) return date;
+    date = nextWorkdayOnOrAfter(addDays(date, 1), state.settings.blockedDays);
+  }
+  return date;
+}
+
+function shortDate(iso: string): string {
+  const text = fmtDateWeekday(iso);
+  return text.replace(/\.\d{4}$/, '');
+}
+
+function smsHref(phone: string, body: string): string {
+  return `sms:${phone.replace(/\s/g, '')}?&body=${encodeURIComponent(body)}`;
+}
 
 export function Home() {
   const state = useAppState();
   const nav = useNav();
   const today = todayOf(state.settings);
   const h = homeStats(state);
-  const late = lateDrafts(state);
-  const calls = callList(state);
+  const empty = state.facilities.length === 0;
+  const todayDay = h.todayDay;
   const next = h.nextDay;
-  const tl = next ? dayTimeline(state, next) : null;
-  const rel = next ? (next.date === today ? 'I dag' : next.date === addDays(today, 1) ? 'I morgen' : 'Neste kjøredag') : '';
-  const inQ = h.dueInQuarter.filter((c) => !isOverdue(c.due, today));
-  const queue = h.dueInQuarter.filter((c) => c.status === 'ikke_planlagt').slice(0, 5);
+  const target = routeDateOf(state, today);
+  const mail = [...draftsToApprove(state), ...readyToSend(state)].filter((d) => d.notice.sendDate <= addDays(today, 21));
+
+  useEffect(() => {
+    if (!mail.length || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const key = 'kontrollplan.notified';
+    const seen = new Set<string>(JSON.parse(sessionStorage.getItem(key) || '[]'));
+    let changed = false;
+    for (const { notice, control } of mail) {
+      if (seen.has(notice.id)) continue;
+      seen.add(notice.id);
+      changed = true;
+      const f = facilityOf(state, control);
+      new Notification(`${kindLabel(notice.kind)} til ${f.customer}`, {
+        body: `${notice.subject}. Godkjenn før den sendes.`,
+        tag: notice.id,
+      });
+    }
+    if (changed) sessionStorage.setItem(key, JSON.stringify([...seen]));
+  }, [mail.map((m) => m.notice.id).join('|')]);
+
+  const makeRoute = () => {
+    tap(16);
+    const res = update((s) => buildQuickRoute(s, target));
+    if (!res) nav.toast('Ingen ledige anlegg innen kjøreavstanden');
+    else nav.toast(`${res.added.length} kunder lagt på ${fmtDateWeekday(target)}`);
+  };
+  const work = quarterWork(state, quarterOf(today));
+  const within = work.filter((c) => {
+    const drive = driveFromBase(state.settings, facilityOf(state, c));
+    return drive !== null && drive <= state.settings.maxDriveMin;
+  });
+  const drammen = work.filter((c) => areaName(state, facilityOf(state, c).id) === 'Drammen og omegn');
 
   return (
-    <div class="screen">
+    <div class="screen home">
       <div class="topbar">
-        <h1>Kontrollplan</h1>
-        <button class="iconbtn" onClick={() => nav.push({ kind: 'settings' })} aria-label="Innstillinger"><Icon.gear /></button>
-      </div>
-      <div class="subtitle">
-        {fmtDateWeekday(today)} · {fmtQuarter(h.quarter)}
-        {state.settings.testDate && <span class="pill orange" style={{ marginLeft: 8 }}>Testdato</span>}
-      </div>
-
-      {late.length > 0 && (
-        <button class="banner red" onClick={() => nav.tab('innboks')}>
-          <Icon.mail />
-          <span style={{ flex: 1 }}>{late.length === 1 ? '1 utkast skulle vært godkjent i dag' : `${late.length} utkast skulle vært godkjent i dag`}</span>
-          <Icon.chevR />
-        </button>
-      )}
-
-      <div class="card hero mt12">
-        {next && tl ? (
-          <>
-            <div class="eyebrow">{rel}</div>
-            <div class="date" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(next.date)}</div>
-            <div class="meta">
-              {next.stops.length} {next.stops.length === 1 ? 'stopp' : 'stopp'} · {dayArea(state, next)} · hjemme ca. {minutesToClock(tl.endMin)}
-            </div>
-            <div class="actions">
-              <button class="btn primary" style={{ flex: 1 }} onClick={() => nav.push({ kind: 'route', dayId: next.id })}>
-                <Icon.nav /> Start ruten
-              </button>
-              <button class="btn" onClick={() => nav.tab('kart', { dayId: next.id })}>Kart</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div class="eyebrow">Neste kjøredag</div>
-            <div class="date">Ingen kjøredager planlagt</div>
-            <div class="meta">Lag en kvartalsplan, så får du ferdige kjøredager og forvarsler.</div>
-            <div class="actions"><button class="btn primary" onClick={() => nav.tab('plan')}>Lag plan</button></div>
-          </>
+        <h1 style={{ textTransform: 'capitalize', fontSize: 26 }}>{empty ? 'Kontrollplan' : shortDate(today)}</h1>
+        {mail.length > 0 && (
+          <button class="pill solid-red" onClick={() => nav.push({ kind: 'approve' })}>{mail.length} e-post</button>
         )}
+        <MerButton />
       </div>
 
-      <div class="stats">
-        <button class="stat" onClick={() => nav.push({ kind: 'list', title: `Forfaller i ${fmtQ(h.quarter)}`, subtitle: 'Forfalte står øverst', ids: h.dueInQuarter.map((c) => c.id) })}>
-          <span class="n">{inQ.length}</span>
-          <span class="l">Forfaller i {fmtQ(h.quarter)}</span>
-        </button>
-        <button class={`stat${h.overdue.length ? ' alert' : ''}`} onClick={() => nav.push({ kind: 'list', title: 'Forfalt', ids: h.overdue.map((c) => c.id) })}>
-          <span class="n">{h.overdue.length}</span>
-          <span class="l">Forfalt</span>
-        </button>
-        <button class={`stat${late.length ? ' alert' : ''}`} onClick={() => nav.tab('innboks')}>
-          <span class="n">{h.pending}</span>
-          <span class="l">Venter på godkjenning</span>
-        </button>
-        <button class="stat" onClick={() => nav.push({ kind: 'list', title: 'Utsatt', ids: h.postponed.map((c) => c.id) })}>
-          <span class="n">{h.postponed.length}</span>
-          <span class="l">Utsatt</span>
-        </button>
-      </div>
-
-      {calls.length > 0 && (
-        <button class="banner soft" onClick={() => nav.tab('innboks')}>
-          <Icon.phone />
-          <span style={{ flex: 1 }}>Ring disse: {calls.length}</span>
-          <Icon.chevR />
-        </button>
-      )}
-
-      <Section title="Ikke planlagt ennå" action={queue.length ? <button class="link" onClick={() => nav.tab('plan')}>Lag plan</button> : undefined}>
-        {queue.length ? (
-          <div class="list">
-            {queue.map((c) => {
-              const f = facilityOf(state, c);
-              return (
-                <Row
-                  left={<Dot c={c} f={f} today={today} />}
-                  title={f.customer}
-                  sub={`${f.address.place} · ${nextStep(state, c, today)}`}
-                  right={isOverdue(c.due, today) ? <span class="pill solid-red">Forfalt</span> : fmtQ(c.due)}
-                  onClick={() => nav.push({ kind: 'facility', id: f.id })}
-                />
-              );
-            })}
+      {empty ? (
+        <div class="card hero mt12">
+          <div class="eyebrow">Kom i gang</div>
+          <div class="date">Last opp kundene</div>
+          <div class="meta">Rapportene blir kvartal, adresse og neste kontroll. Med API-nøkkel leser AI dokumentet, ellers brukes reglene.</div>
+          <div class="actions">
+            <button class="btn primary" style={{ flex: 1 }} onClick={() => nav.push({ kind: 'import' })}><Icon.upload />Last opp</button>
           </div>
-        ) : (
-          <div class="list"><Empty title="Alt i kvartalet er planlagt">Nye frister dukker opp her.</Empty></div>
-        )}
-      </Section>
+        </div>
+      ) : todayDay ? (
+        <DayList day={todayDay} />
+      ) : (
+        <>
+          <div class="subtitle">Ingen stopp i dag · hjemme fra {state.settings.baseName}</div>
+          <button class="btn primary block" onClick={makeRoute}>
+            <Icon.route />{target === today ? 'Lag rute for i dag' : `Lag rute ${shortDate(target)}`}
+          </button>
+          <button class="link block" onClick={() => nav.tab('kart', { band: state.settings.maxDriveMin })}>
+            {within.length} innen {state.settings.maxDriveMin === 120 ? '2 timer' : `${state.settings.maxDriveMin} min`} · {drammen.length} i Drammen
+          </button>
+          {next && <DayList day={next} upcoming />}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DayList({ day, upcoming }: { day: PlanDay; upcoming?: boolean }) {
+  const state = useAppState();
+  const nav = useNav();
+  const tl = dayTimeline(state, day);
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <div class="card pad mt12">
+      {upcoming && <div class="kicker">Neste kjøredag · {shortDate(day.date)}</div>}
+      {!upcoming && (
+        <div class="meta" style={{ marginBottom: 4 }}>
+          {day.stops.length} stopp · {dayArea(state, day)} · hjemme ca. {minutesToClock(tl.endMin)}
+        </div>
+      )}
+      {day.stops.map((id) => {
+        const c = findControl(state, id);
+        if (!c) return null;
+        const f = facilityOf(state, c);
+        const slot = tl.slots[id];
+        const when = c.timeFrom ?? (slot ? minutesToClock(slot.start) : '–');
+        const phone = primaryPhone(f);
+        const eta = c.timeFrom ?? (slot ? minutesToClock(slot.start) : '');
+        const expanded = open === id;
+        const phoneStyle = phone ? {} : { opacity: 0.4, pointerEvents: 'none' as const };
+        return (
+          <div class="dstop" key={id}>
+            <button class="dstop-main" onClick={() => setOpen(expanded ? null : id)} aria-expanded={expanded}>
+              <span class="when">{when}</span>
+              <span class="who">
+                <b>{f.customer}</b>
+                <small>{f.address.place}</small>
+              </span>
+            </button>
+            {expanded && (
+              <div class="dstop-actions">
+                <div class="btnrow">
+                  <a class="btn" style={phoneStyle} href={phone ? `tel:${phone.replace(/\s/g, '')}` : undefined}><Icon.phone />Ring</a>
+                  <a class="btn" style={phoneStyle} href={phone ? smsHref(phone, `Hei, jeg er på vei til ${f.customer}, er der ca. ${eta}.`) : undefined}><Icon.mail />SMS</a>
+                </div>
+                {c.status !== 'utfort' && (
+                  <div class="btnrow mt8">
+                    <button class="btn" onClick={() => nav.sheet({ kind: 'complete', controlId: c.id })}><Icon.done />Utført</button>
+                    <button class="btn" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}><Icon.pause />Utsett</button>
+                  </div>
+                )}
+                <div class="btnrow mt8">
+                  <button class="btn" onClick={() => nav.push({ kind: 'route', dayId: day.id })}><Icon.nav />Rute</button>
+                  <button class="btn" onClick={() => nav.push({ kind: 'facility', id: f.id })}>Anleggskort</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {upcoming && <div class="muted small mt8">Hjemme ca. {minutesToClock(tl.endMin)}{tl.overtime ? ' · over arbeidstiden' : ''}</div>}
+      {!upcoming && (
+        <button class="btn ghost block mt8" onClick={() => nav.sheet({ kind: 'today', date: day.date })}>Legg til stopp</button>
+      )}
     </div>
   );
 }

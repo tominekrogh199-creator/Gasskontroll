@@ -1,11 +1,12 @@
 import { useState } from 'preact/hooks';
-import { useAppState } from '../store';
+import { update, useAppState } from '../store';
 import { Dot, Empty, FlagPills, Icon, NavBar, Row, useNav } from './components';
 import type { Control, ControlStatus } from '../domain/types';
 import { STATUS_LABEL } from '../domain/types';
 import { currentControl, facilityOf, missingInfo, nextStep, todayOf } from '../domain/controls';
 import { addQuarters, fmtQ, isOverdue, quarterOf } from '../domain/dates';
 import { areaCounts, areaName, driveMinOf, urgencySort } from '../domain/selectors';
+import { mergeIntoOneVisit, sameAddressPairs } from '../domain/merge';
 
 export function ControlRow({ c }: { c: Control }) {
   const state = useAppState();
@@ -20,6 +21,7 @@ export function ControlRow({ c }: { c: Control }) {
       sub={
         <>
           {f.address.place} · {STATUS_LABEL[c.status]} · {nextStep(state, c, today)}
+          {f.mergedInto ? ' · samme besøk' : ''}
         </>
       }
       right={
@@ -55,6 +57,7 @@ export function Facilities() {
   const today = todayOf(state.settings);
   const q0 = quarterOf(today);
   const [query, setQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
   const [quarter, setQuarter] = useState('alle');
   const [year, setYear] = useState('alle');
   const [area, setArea] = useState('alle');
@@ -89,55 +92,75 @@ export function Facilities() {
   const areas = areaCounts(state, filtered);
   const allAreas = [...new Set(state.facilities.map((f) => areaName(state, f.id)))].sort();
   const years = [...new Set(controls.map((c) => c.due.year))].sort();
+  const missingCount = controls.filter((c) => {
+    const f = facilityOf(state, c);
+    return !f.mergedInto && c.status !== 'utfort' && missingInfo(f).length > 0;
+  }).length;
+  const pairs = sameAddressPairs(state);
 
   return (
     <div class="screen">
-      <div class="topbar">
-        <h1>Anlegg</h1>
-        <button class="iconbtn" onClick={() => nav.push({ kind: 'import' })} aria-label="Importer eller registrer"><Icon.plus /></button>
-      </div>
+      <NavBar title="Kunder" />
       <div class="search">
         <Icon.search />
         <input class="inp" type="search" placeholder="Søk kunde, adresse, Objekt ID" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
       </div>
-      <div class="chips mt8">
-        {(['alle', 'forfalt', 'ikke_planlagt', 'planlagt', 'varslet', 'bekreftet', 'utsatt', 'utfort', 'mangler'] as StatusFilter[]).map((s) => (
-          <button class={`chip${status === s ? ' on' : ''}`} onClick={() => setStatus(s)}>
-            {s === 'alle' ? 'Alle' : s === 'forfalt' ? 'Forfalt' : s === 'mangler' ? 'Mangler info' : STATUS_LABEL[s as ControlStatus]}
-          </button>
-        ))}
+      <div class="btnrow mt8">
+        <button class="btn" onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>{showFilters ? 'Skjul filter' : 'Filter'}</button>
+        <button class={`btn${status === 'mangler' ? ' primary' : ''}`} onClick={() => setStatus(status === 'mangler' ? 'alle' : 'mangler')}>Mangler info · {missingCount}</button>
       </div>
-      <div class="grid2 mt8">
-        <select class="sel" value={quarter} onChange={(e) => setQuarter(e.currentTarget.value)} aria-label="Kvartal">
-          <option value="alle">Alle kvartal</option>
-          {[1, 2, 3, 4].map((q) => <option value={String(q)}>{q}. kvartal</option>)}
-        </select>
-        <select class="sel" value={year} onChange={(e) => setYear(e.currentTarget.value)} aria-label="År">
-          <option value="alle">Alle år</option>
-          {years.map((y) => <option value={String(y)}>{y}</option>)}
-        </select>
-        <select class="sel" value={area} onChange={(e) => setArea(e.currentTarget.value)} aria-label="Område">
-          <option value="alle">Alle områder</option>
-          {allAreas.map((a) => <option value={a}>{a}</option>)}
-        </select>
-        <select class="sel" value={drive} onChange={(e) => setDrive(e.currentTarget.value)} aria-label="Kjøretid">
-          <option value="alle">All kjøretid</option>
-          {[30, 60, 90, 120].map((m) => <option value={String(m)}>Inntil ca. {m} min</option>)}
-          <option value="utenfor">Utenfor radius ({state.settings.maxDriveMin} min)</option>
-        </select>
-      </div>
-      <div class="chips mt8" aria-label="Antall per område">
-        {areas.map((a) => (
-          <button class={`chip${area === a.area ? ' on' : ''}`} onClick={() => setArea(area === a.area ? 'alle' : a.area)}>
-            {a.area}: <b>{a.count}</b>
-          </button>
-        ))}
-      </div>
+      {showFilters && (
+        <>
+          <div class="chips mt8">
+            {(['alle', 'forfalt', 'ikke_planlagt', 'planlagt', 'varslet', 'bekreftet', 'utsatt', 'utfort', 'mangler'] as StatusFilter[]).map((s) => (
+              <button class={`chip${status === s ? ' on' : ''}`} onClick={() => setStatus(s)}>
+                {s === 'alle' ? 'Alle' : s === 'forfalt' ? 'Forfalt' : s === 'mangler' ? 'Mangler info' : STATUS_LABEL[s as ControlStatus]}
+              </button>
+            ))}
+          </div>
+          <div class="grid2 mt8">
+            <select class="sel" value={quarter} onChange={(e) => setQuarter(e.currentTarget.value)} aria-label="Kvartal">
+              <option value="alle">Alle kvartal</option>
+              {[1, 2, 3, 4].map((q) => <option value={String(q)}>{q}. kvartal</option>)}
+            </select>
+            <select class="sel" value={year} onChange={(e) => setYear(e.currentTarget.value)} aria-label="År">
+              <option value="alle">Alle år</option>
+              {years.map((y) => <option value={String(y)}>{y}</option>)}
+            </select>
+            <select class="sel" value={area} onChange={(e) => setArea(e.currentTarget.value)} aria-label="Område">
+              <option value="alle">Alle områder</option>
+              {allAreas.map((a) => <option value={a}>{a}</option>)}
+            </select>
+            <select class="sel" value={drive} onChange={(e) => setDrive(e.currentTarget.value)} aria-label="Kjøretid">
+              <option value="alle">All kjøretid</option>
+              {[30, 60, 90, 120].map((m) => <option value={String(m)}>Inntil ca. {m} min</option>)}
+              <option value="utenfor">Utenfor radius ({state.settings.maxDriveMin} min)</option>
+            </select>
+          </div>
+          <div class="chips mt8" aria-label="Antall per område">
+            {areas.map((a) => (
+              <button class={`chip${area === a.area ? ' on' : ''}`} onClick={() => setArea(area === a.area ? 'alle' : a.area)}>
+                {a.area}: <b>{a.count}</b>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {pairs.map(({ a, b }) => (
+        <button class="banner soft" onClick={() => {
+          const { keepId } = update((s) => mergeIntoOneVisit(s, a.id, b.id));
+          const keep = state.facilities.find((f) => f.id === keepId);
+          nav.toast(keep ? `${a.customer} og ${b.customer} er ett besøk` : 'Slått sammen til ett besøk');
+        }}>
+          <span style={{ flex: 1 }}>Samme adresse: {a.customer} og {b.customer}. Slå sammen til ett besøk.</span>
+          <Icon.chevR />
+        </button>
+      ))}
       <div class="muted small" style={{ margin: '4px 2px 8px' }}>
         {sorted.length} av {controls.length} anlegg · {fmtQ(q0)} nå, {fmtQ(addQuarters(q0, 1))} neste
       </div>
       <div class="list">
-        {sorted.length ? sorted.map((c) => <ControlRow c={c} />) : <Empty title="Ingen treff">Endre søket eller filtrene, eller legg til anlegg med +.</Empty>}
+        {sorted.length ? sorted.map((c) => <ControlRow c={c} />) : <Empty title="Ingen treff">Endre søket eller filtrene. Nye kunder kommer fra Last opp.</Empty>}
       </div>
     </div>
   );

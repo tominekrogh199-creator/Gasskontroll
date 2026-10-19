@@ -150,6 +150,17 @@ export function isOverdue(due: Quarter, today: string): boolean {
   return today > quarterEnd(due);
 }
 
+/** Vanlig neste frist: samme kvartal om fire år. */
+export function suggestedNextDue(date: string): Quarter {
+  return addQuarters(quarterOf(date), 16);
+}
+
+/** Mandag i uken datoen ligger i. */
+export function weekMonday(iso: string): string {
+  const w = weekday(iso);
+  return addDays(iso, w === 0 ? -6 : 1 - w);
+}
+
 export function workdaysInRange(from: string, to: string, blocked: string[] = []): string[] {
   const out: string[] = [];
   for (let d = from; d <= to; d = addDays(d, 1)) if (isWorkday(d, blocked)) out.push(d);

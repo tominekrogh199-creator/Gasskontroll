@@ -71,6 +71,8 @@ export interface Facility {
   history: ReportHistory[];
   log: LogEntry[];
   adhoc?: boolean;
+  /** Anlegget dekkes av besøket til dette anlegget (samme adresse, ett stopp). */
+  mergedInto?: string | null;
 }
 
 export type ControlStatus = 'ikke_planlagt' | 'planlagt' | 'varslet' | 'bekreftet' | 'utfort' | 'utsatt';
@@ -135,6 +137,8 @@ export interface Control {
   callReason: string | null; // satt når kontrollen står i «Ring disse»
   log: LogEntry[];
   adhocLabel?: string;
+  /** Kunden har bedt om et klokkeslett. Ruten flytter ikke dette av seg selv. */
+  timePinned?: boolean;
 }
 
 export interface PlanDay {
@@ -143,6 +147,10 @@ export interface PlanDay {
   stops: string[]; // kontroll-id-er i kjørerekkefølge
   locked: boolean;
   overnight: 'ut' | 'hjem' | null; // del av en tur med overnatting
+  /** Hvor kjøringen starter. Tom = basen. */
+  startMode?: 'base' | 'gps' | 'siste';
+  startLat?: number | null;
+  startLng?: number | null;
 }
 
 export interface Templates { forvarsel: string; forvarselKvartal: string; paminnelse: string; purring: string }
@@ -157,6 +165,8 @@ export interface Settings {
   controlMin: number;
   maxPerDay: number;
   maxDriveMin: number;
+  /** Brukeren har selv valgt kjøreradien. Uten dette blir lagret standard 150 min til 120. */
+  driveRadiusCustom?: boolean;
   preNoticeDays: number;
   reminderWorkdays: number;
   chaseDays: number;

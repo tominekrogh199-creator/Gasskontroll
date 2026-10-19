@@ -2,8 +2,8 @@
 // Etter importen er appen sannheten – PDF-ene leses én gang.
 import type { AppState, Confidence, Contact, Facility, Quarter } from './types';
 import type { FieldKey, ParsedReport } from './reportParser';
-import { parseNorDate, fmtDate, fmtQuarter, nowStamp } from './dates';
-import { currentControl, logBoth, newControl, todayOf, uid } from './controls';
+import { compareQuarter, parseNorDate, fmtDate, fmtQuarter, nowStamp, quarterOf } from './dates';
+import { complete, currentControl, logBoth, newControl, todayOf, uid } from './controls';
 import { geocode } from '../adapters/geocode';
 
 export const EXAMPLE_REPORT = `KONTROLL AV GASSANLEGG
@@ -152,20 +152,24 @@ export function importFacility(state: AppState, f: Facility): ImportOutcome {
     existing.log.push({ at: nowStamp(today), text: `Eldre rapport ${f.sourceFile} (${fmtDate(f.reportDate)}) lagt i historikk` });
     return { facility: existing, kind: 'historikk', message: `Duplikat ${f.objectId}: eldre rapport lagt i historikk` };
   }
-  existing.history.push({ reportDate: existing.reportDate, lastControl: existing.lastControl, nextDue: existing.nextDue, sourceFile: existing.sourceFile, note: 'Erstattet av nyere rapport' });
-  const keep = { id: existing.id, notes: existing.notes, blockedPeriods: existing.blockedPeriods, history: existing.history, log: existing.log, durationMin: existing.durationMin };
-  Object.assign(existing, f, keep);
-  existing.log.push({ at: nowStamp(today), text: `Oppdatert fra nyere rapport ${f.sourceFile} (${fmtDate(f.reportDate)})` });
   const c = currentControl(state, existing.id);
-  if (f.nextDue && c && c.status !== 'utfort') {
-    if (c.due.q !== f.nextDue.q || c.due.year !== f.nextDue.year) {
-      logBoth(state, c, `Frist endret fra ${fmtQuarter(c.due)} til ${fmtQuarter(f.nextDue)} (nyere rapport)`);
-      c.due = f.nextDue;
-    }
-  } else if (f.nextDue && !c) {
-    state.controls.push(newControl(existing.id, f.nextDue));
+  const newDue = f.nextDue;
+  const dueChanged = !!(newDue && c && c.status !== 'utfort' && (c.due.q !== newDue.q || c.due.year !== newDue.year));
+  const closeDate = f.lastControl && f.lastControl <= today ? f.lastControl : today;
+  if (dueChanged && newDue && c && compareQuarter(newDue, quarterOf(closeDate)) > 0) {
+    complete(state, c.id, newDue, { date: closeDate, viaReport: true });
   }
-  return { facility: existing, kind: 'oppdatert', message: `Duplikat ${f.objectId}: nyeste rapport er gjeldende` };
+  existing.history.push({ reportDate: existing.reportDate, lastControl: existing.lastControl, nextDue: existing.nextDue, sourceFile: existing.sourceFile, note: 'Erstattet av nyere rapport' });
+  const keep = { id: existing.id, notes: existing.notes, blockedPeriods: existing.blockedPeriods, history: existing.history, log: existing.log, durationMin: existing.durationMin, mergedInto: existing.mergedInto, nextDue: existing.nextDue, lastControl: existing.lastControl };
+  Object.assign(existing, f, keep);
+  if (!dueChanged) {
+    existing.nextDue = f.nextDue;
+    existing.lastControl = f.lastControl;
+  }
+  existing.log.push({ at: nowStamp(today), text: dueChanged && newDue ? `Ny rapport ${f.sourceFile}: forrige kontroll lukket som utført, ny frist ${fmtQuarter(newDue)}` : `Oppdatert fra nyere rapport ${f.sourceFile} (${fmtDate(f.reportDate)})` });
+  const open = currentControl(state, existing.id);
+  if (f.nextDue && !open) state.controls.push(newControl(existing.id, f.nextDue));
+  return { facility: existing, kind: 'oppdatert', message: dueChanged && newDue ? `Ny rapport ${f.objectId}: utført, neste frist ${fmtQuarter(newDue)}` : `Duplikat ${f.objectId}: nyeste rapport er gjeldende` };
 }
 
 /** Etter gjennomgang: sørger for at anlegget har en åpen kontroll når fristen er kjent. */

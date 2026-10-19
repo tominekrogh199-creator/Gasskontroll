@@ -22,4 +22,10 @@ export function getDriveKm(a: LatLng, b: LatLng): number {
   return haversineKm(a, b) * 1.4;
 }
 
+/** Samme formel baklengs: kjøretid i minutter → radius i meter rundt basen. */
+export function minutesToRadiusMeters(min: number): number {
+  const roadKm = Math.max(0, min - 5) * (70 / 60);
+  return (roadKm / 1.4) * 1000;
+}
+
 export const DRIVE_TIME_IS_ESTIMATE = true;

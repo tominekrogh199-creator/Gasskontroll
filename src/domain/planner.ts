@@ -3,8 +3,8 @@
 import type { AppState, Control, Facility, PlanDay, Quarter, Settings } from './types';
 import { getDriveTime, type LatLng } from '../adapters/driveTime';
 import {
-  addDays, clockToMinutes, compareQuarter, isOverdue, isWorkday, minutesToClock, nextWorkdayOnOrAfter,
-  quarterEnd, quarterStart, sameQuarter, workdaysInRange, addQuarters, fmtDate, fmtQuarter,
+  addDays, addWorkdays, clockToMinutes, compareQuarter, isOverdue, isWorkday, minutesToClock, nextWorkdayOnOrAfter,
+  quarterEnd, quarterOf, quarterStart, sameQuarter, workdaysInRange, addQuarters, fmtDate, fmtQuarter,
 } from './dates';
 import { areaFor } from './geo';
 import { detachFromDay, facilityOf, findControl, logBoth, postponedEligible, setStatus, todayOf, uid } from './controls';
@@ -42,14 +42,14 @@ export interface Timeline {
 
 export interface Stop { controlId: string; point: LatLng; duration: number }
 
-export interface TimelineOpts { start?: LatLng | null; end?: LatLng | null; startLabel?: string }
+export interface TimelineOpts { start?: LatLng | null; end?: LatLng | null; startLabel?: string; startMin?: number }
 
 /** Lager tidslinje for en dag. start/slutt = basen, eller overnattingssted (end: null = overnatting, ingen hjemtur). */
 export function buildTimeline(stops: Stop[], s: Settings, opts: TimelineOpts = {}): Timeline {
   const base = basePoint(s);
   const startPt = opts.start === undefined ? base : opts.start ?? base;
   const endPt = opts.end === undefined ? base : opts.end;
-  const dayStart = clockToMinutes(s.dayStart);
+  const dayStart = opts.startMin ?? clockToMinutes(s.dayStart);
   const dayEnd = clockToMinutes(s.dayEnd);
   const lunchEarliest = 11 * 60;
   const lunchLatest = 11 * 60 + 30;
@@ -159,6 +159,39 @@ function dayEnds(state: AppState, day: PlanDay): TimelineOpts {
   return { start: last?.point ?? null, startLabel: 'overnattingssted' };
 }
 
+function lastDoneIndex(state: AppState, day: PlanDay): number {
+  let idx = -1;
+  day.stops.forEach((id, i) => {
+    if (findControl(state, id)?.status === 'utfort') idx = i;
+  });
+  return idx;
+}
+
+/** Startpunkt for dagen: basen, der telefonen er, eller siste stopp. */
+export function routeOpts(state: AppState, day: PlanDay): { opts: TimelineOpts; ids: string[] } {
+  const overnight = dayEnds(state, day);
+  if (day.overnight === 'hjem') return { opts: overnight, ids: day.stops };
+  if (day.startMode === 'gps' && day.startLat != null && day.startLng != null) {
+    return { opts: { ...overnight, start: { lat: day.startLat, lng: day.startLng }, startLabel: 'der du er' }, ids: day.stops };
+  }
+  if (day.startMode === 'siste') {
+    const idx = lastDoneIndex(state, day);
+    if (idx >= 0) {
+      const st = stopOf(state, day.stops[idx]);
+      const done = findControl(state, day.stops[idx]);
+      const startMin = done?.timeTo ? clockToMinutes(done.timeTo) : undefined;
+      return {
+        opts: { ...overnight, start: st?.point ?? basePoint(state.settings), startLabel: 'siste stopp', startMin },
+        ids: day.stops.slice(idx + 1),
+      };
+    }
+    const prev = [...state.days].filter((d) => d.date < day.date && d.stops.length).sort((a, b) => b.date.localeCompare(a.date))[0];
+    const last = prev ? stopOf(state, prev.stops[prev.stops.length - 1]) : null;
+    if (last) return { opts: { ...overnight, start: last.point, startLabel: 'siste stopp' }, ids: day.stops };
+  }
+  return { opts: overnight, ids: day.stops };
+}
+
 export function overnightPartner(state: AppState, day: PlanDay): PlanDay | undefined {
   if (!day.overnight) return undefined;
   const sorted = [...state.days].sort((a, b) => a.date.localeCompare(b.date));
@@ -167,8 +200,9 @@ export function overnightPartner(state: AppState, day: PlanDay): PlanDay | undef
 }
 
 export function dayTimeline(state: AppState, day: PlanDay): Timeline {
-  const stops = day.stops.map((id) => stopOf(state, id)).filter((x): x is Stop => !!x);
-  return buildTimeline(stops, state.settings, dayEnds(state, day));
+  const { opts, ids } = routeOpts(state, day);
+  const stops = ids.map((id) => stopOf(state, id)).filter((x): x is Stop => !!x);
+  return buildTimeline(stops, state.settings, opts);
 }
 
 function fits(stops: Stop[], s: Settings, opts: TimelineOpts = {}): boolean {
@@ -179,10 +213,10 @@ function fits(stops: Stop[], s: Settings, opts: TimelineOpts = {}): boolean {
 /** Oppdaterer rekkefølge (om ønsket) og tidsrom for kontrollene på en dag. */
 export function refreshDay(state: AppState, day: PlanDay, reorder = false): void {
   if (reorder && !day.locked) {
+    const { opts } = routeOpts(state, day);
     const stops = day.stops.map((id) => stopOf(state, id)).filter((x): x is Stop => !!x);
-    const o = dayEnds(state, day);
-    const start = o.start === undefined ? basePoint(state.settings) : o.start ?? basePoint(state.settings);
-    const end = o.end === undefined ? basePoint(state.settings) : o.end;
+    const start = opts.start === undefined ? basePoint(state.settings) : opts.start ?? basePoint(state.settings);
+    const end = opts.end === undefined ? basePoint(state.settings) : opts.end;
     const noCoords = day.stops.filter((id) => !stopOf(state, id));
     day.stops = [...orderStops(stops, start, end).map((s) => s.controlId), ...noCoords];
   }
@@ -192,12 +226,136 @@ export function refreshDay(state: AppState, day: PlanDay, reorder = false): void
     if (!c) continue;
     c.plannedDate = day.date;
     const slot = tl.slots[id];
-    if (slot && (c.status === 'planlagt' || !c.timeFrom)) {
-      const from = Math.floor(slot.start / 30) * 30;
-      c.timeFrom = minutesToClock(from);
-      c.timeTo = minutesToClock(from + 120);
+    if (slot && !c.timePinned) {
+      c.timeFrom = minutesToClock(slot.start);
+      c.timeTo = minutesToClock(slot.end);
     }
   }
+}
+
+/** Flytter et stopp ett hakk opp eller ned og regner tidene på nytt. */
+export function moveStopBy(state: AppState, controlId: string, dir: -1 | 1): boolean {
+  const day = state.days.find((d) => d.stops.includes(controlId));
+  if (!day || day.locked) return false;
+  const i = day.stops.indexOf(controlId);
+  const j = i + dir;
+  if (j < 0 || j >= day.stops.length) return false;
+  const stops = [...day.stops];
+  const [sp] = stops.splice(i, 1);
+  stops.splice(j, 0, sp);
+  day.stops = stops;
+  refreshDay(state, day, false);
+  return true;
+}
+
+/** Setter rekkefølgen slik brukeren dro den, og regner tidene på nytt. */
+export function setDayOrder(state: AppState, dayId: string, stops: string[]): void {
+  const day = state.days.find((d) => d.id === dayId);
+  if (!day || day.locked) return;
+  const same = new Set(day.stops);
+  if (stops.length !== day.stops.length || stops.some((id) => !same.has(id))) return;
+  day.stops = [...stops];
+  refreshDay(state, day, false);
+}
+
+/** Hjemmetid før og etter nærmeste-nabo-rekkefølge. Endrer ikke dagen. */
+export function optimizePreview(state: AppState, dayId: string): { before: number; after: number; order: string[] } | null {
+  const day = state.days.find((d) => d.id === dayId);
+  if (!day || day.stops.length < 2) return null;
+  const before = dayTimeline(state, day).endMin;
+  const draft = structuredClone(state);
+  const d = draft.days.find((x) => x.id === dayId)!;
+  refreshDay(draft, d, true);
+  return { before, after: dayTimeline(draft, d).endMin, order: [...d.stops] };
+}
+
+export function applyOptimizedOrder(state: AppState, dayId: string): void {
+  const day = state.days.find((d) => d.id === dayId);
+  if (!day || day.locked) return;
+  refreshDay(state, day, true);
+}
+
+/**
+ * Plukker 3–4 kunder etter frist og nærhet og legger dem på dagen.
+ * Forfalte først, deretter dette kvartalet, innenfor kjøreradien, så lenge dagen går opp.
+ */
+export function buildQuickRoute(state: AppState, date: string): { dayId: string; added: string[] } | null {
+  const s = state.settings;
+  const today = todayOf(s);
+  const q = quarterOf(today);
+  const existing = state.days.find((d) => d.date === date);
+  if (existing?.locked) return null;
+  const already = existing?.stops.length ?? 0;
+  if (already >= s.maxPerDay) return null;
+  const planned = new Set(state.days.flatMap((d) => d.stops));
+  const base = basePoint(s);
+  const pool: { control: Control; facility: Facility; drive: number; overdue: boolean }[] = [];
+  for (const c of state.controls) {
+    if (planned.has(c.id) || !isOpenForPlanning(c)) continue;
+    if (c.status === 'utsatt' && !postponedEligible(c, q, today)) continue;
+    const f = facilityOf(state, c);
+    if (f.mergedInto || !f.coords) continue;
+    if (f.blockedPeriods.some((p) => date >= p.from && date <= p.to)) continue;
+    const drive = getDriveTime(base, f.coords);
+    if (drive > s.maxDriveMin) continue;
+    const overdue = isOverdue(c.due, today) || compareQuarter(c.due, q) < 0;
+    if (!overdue && compareQuarter(c.due, q) > 0) continue;
+    pool.push({ control: c, facility: f, drive, overdue });
+  }
+  const chosen: typeof pool = [];
+  const rejected = new Set<string>();
+  while (chosen.length + already < s.maxPerDay) {
+    let pick: (typeof pool)[number] | null = null;
+    let best = Infinity;
+    for (const item of pool) {
+      if (chosen.includes(item) || rejected.has(item.control.id)) continue;
+      const near = chosen.length ? Math.min(...chosen.map((g) => getDriveTime(g.facility.coords!, item.facility.coords!))) : item.drive;
+      const score = (item.overdue ? 0 : 1000) + near;
+      if (score < best) { best = score; pick = item; }
+    }
+    if (!pick?.facility.coords) break;
+    const stops: Stop[] = [
+      ...(existing ? existing.stops.map((id) => stopOf(state, id)).filter((x): x is Stop => !!x) : []),
+      ...chosen.map((g) => ({ controlId: g.control.id, point: g.facility.coords!, duration: durationOf(g.facility, s) })),
+      { controlId: pick.control.id, point: pick.facility.coords, duration: durationOf(pick.facility, s) },
+    ];
+    if (!fits(orderStops(stops, base, base), s)) {
+      rejected.add(pick.control.id);
+      continue;
+    }
+    chosen.push(pick);
+  }
+  if (!chosen.length) return null;
+  const day = ensureDay(state, date);
+  const added: string[] = [];
+  for (const item of chosen) {
+    addStopToDay(state, item.control.id, day.id);
+    added.push(item.control.id);
+  }
+  return { dayId: day.id, added };
+}
+
+/** Forfalte og nærliggende anlegg som kan legges på en valgt dag, også i dag. */
+export function daySuggestions(state: AppState, date: string, limit = 8): { control: Control; facility: Facility; drive: number; overdue: boolean }[] {
+  const s = state.settings;
+  const today = todayOf(s);
+  const q = quarterOf(today);
+  const planned = new Set(state.days.flatMap((d) => d.stops));
+  const base = basePoint(s);
+  const out: { control: Control; facility: Facility; drive: number; overdue: boolean }[] = [];
+  for (const c of state.controls) {
+    if (planned.has(c.id) || !isOpenForPlanning(c)) continue;
+    if (c.status === 'utsatt' && !postponedEligible(c, quarterOf(date), today)) continue;
+    const f = facilityOf(state, c);
+    if (f.mergedInto || !f.coords) continue;
+    if (f.blockedPeriods.some((p) => date >= p.from && date <= p.to)) continue;
+    const overdue = isOverdue(c.due, today) || compareQuarter(c.due, q) < 0;
+    const drive = getDriveTime(base, f.coords);
+    if (!overdue && compareQuarter(c.due, q) > 0) continue;
+    if (!overdue && drive > s.maxDriveMin) continue;
+    out.push({ control: c, facility: f, drive, overdue });
+  }
+  return out.sort((a, b) => Number(b.overdue) - Number(a.overdue) || a.drive - b.drive).slice(0, limit);
 }
 
 // ---------- Kandidater ----------
@@ -222,6 +380,7 @@ export function candidatesFor(state: AppState, q: Quarter, opts: { includePlanne
     if (compareQuarter(c.due, q) > 0) continue;
     if (c.status === 'utsatt' && !postponedEligible(c, q, today)) continue;
     const f = facilityOf(state, c);
+    if (f.mergedInto) continue;
     if (!f.coords) { noCoords.push(c); continue; }
     const drive = getDriveTime(basePoint(s), f.coords);
     const cand: Candidate = { control: c, facility: f, overdue: isOverdue(c.due, planningRef) || compareQuarter(c.due, q) < 0, drive, early: false };
@@ -285,6 +444,25 @@ export function earliestPlanDate(state: AppState): string {
   return nextWorkdayOnOrAfter(addDays(today, state.settings.preNoticeDays + 1), state.settings.blockedDays);
 }
 
+/** Første virkedag et allerede forfalt anlegg kan tas, med kortere varsel enn de vanlige tre ukene. */
+export function earliestOverdueDate(state: AppState): string {
+  const today = todayOf(state.settings);
+  return addWorkdays(today, 1, state.settings.blockedDays);
+}
+
+/** Besøket ligger innenfor den vanlige forvarselfristen, så varselet må sendes tidligere enn normalt. */
+export function isShortNotice(state: AppState, date: string): boolean {
+  return date < earliestPlanDate(state);
+}
+
+/** Arbeidsdagen har minst én kontrolltid igjen før stengetid. Et fast antall ledige plasser er ikke nok. */
+export function dayHasRoom(state: AppState, day: PlanDay): boolean {
+  if (day.overnight || !day.stops.length) return false;
+  const tl = dayTimeline(state, day);
+  if (tl.overtime) return false;
+  return clockToMinutes(state.settings.dayEnd) - tl.endMin >= state.settings.controlMin;
+}
+
 export function availableDates(state: AppState, q: Quarter, exclude: Set<string>): string[] {
   const s = state.settings;
   const from = [quarterStart(q), earliestPlanDate(state)].sort()[1];
@@ -311,6 +489,19 @@ export function assignDates(groups: Candidate[][], dates: string[]): { date: str
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/** Legger hver gruppe på neste ledige dag, i rekkefølge. Brukes for forfalte, som ikke skal vente på forvarselsfristen. */
+function assignPacked(groups: Candidate[][], dates: string[]): { date: string; group: Candidate[] }[] {
+  const free = [...dates].sort();
+  const out: { date: string; group: Candidate[] }[] = [];
+  for (const g of groups) {
+    const i = free.findIndex((d) => !g.some((c) => blockedFor(c.facility, d)));
+    if (i < 0) continue;
+    const [date] = free.splice(i, 1);
+    out.push({ date, group: g });
+  }
+  return out;
+}
+
 // ---------- Lag plan ----------
 
 export interface PlanResult {
@@ -318,6 +509,8 @@ export interface PlanResult {
   created: number;
   planned: number;
   early: number;
+  /** Kjøredager før den vanlige forvarselfristen, fordi anlegget allerede er forfalt. */
+  shortNotice: number;
   unplaced: Control[];
   outOfRange: Candidate[];
   noCoords: Control[];
@@ -355,8 +548,16 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
   const { list, outOfRange, noCoords } = candidatesFor(state, q);
   const groups = buildDayGroups(list, s);
   const used = new Set(state.days.map((d) => d.date));
+  const noticeFrom = earliestPlanDate(state);
+  const overdueFrom = [quarterStart(q), earliestOverdueDate(state)].sort()[1];
+  const earlyDates = workdaysInRange(overdueFrom, quarterEnd(q), s.blockedDays).filter((d) => !used.has(d) && d < noticeFrom);
+  const overdueGroups = groups.filter((g) => g.some((c) => c.overdue));
+  const laterGroups = groups.filter((g) => !g.some((c) => c.overdue));
+  const earlyAssigned = assignPacked(overdueGroups, earlyDates);
+  for (const a of earlyAssigned) used.add(a.date);
+  const missed = overdueGroups.filter((g) => !earlyAssigned.some((a) => a.group === g));
   const dates = availableDates(state, q, used);
-  const assigned = assignDates(groups, dates);
+  const assigned = [...earlyAssigned, ...assignDates([...missed, ...laterGroups], dates)];
   const placed = new Set(assigned.flatMap((a) => a.group.map((c) => c.control.id)));
   let planned = 0;
   const newDays: PlanDay[] = [];
@@ -366,7 +567,8 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
     newDays.push(day);
     for (const cand of a.group) {
       const c = cand.control;
-      const why = c.status === 'utsatt' ? 'utsettelse fulgt opp' : undefined;
+      const short = a.date < noticeFrom;
+      const why = short ? 'forfalt, kort varsel' : c.status === 'utsatt' ? 'utsettelse fulgt opp' : undefined;
       setStatus(state, c, 'planlagt', why);
       c.callReason = null;
       planned++;
@@ -378,7 +580,7 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
   if (opts.early) {
     const nextQ = addQuarters(q, 1);
     const plannedIds = new Set(state.days.flatMap((d) => d.stops));
-    const pool = state.controls.filter((c) => c.status === 'ikke_planlagt' && sameQuarter(c.due, nextQ) && !plannedIds.has(c.id) && facilityOf(state, c).coords);
+    const pool = state.controls.filter((c) => c.status === 'ikke_planlagt' && !facilityOf(state, c).mergedInto && sameQuarter(c.due, nextQ) && !plannedIds.has(c.id) && facilityOf(state, c).coords);
     for (const day of newDays) {
       for (const c of [...pool]) {
         if (day.stops.length >= s.maxPerDay) break;
@@ -397,7 +599,8 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
     }
   }
   const unplaced = list.filter((c) => !placed.has(c.control.id)).map((c) => c.control);
-  return { quarter: q, created: assigned.length, planned, early, unplaced, outOfRange, noCoords };
+  const shortNotice = assigned.filter((a) => a.date < noticeFrom).length;
+  return { quarter: q, created: assigned.length, planned, early, shortNotice, unplaced, outOfRange, noCoords };
 }
 
 // ---------- Manuelle endringer ----------
@@ -605,14 +808,14 @@ export function appleStopUrl(pt: LatLng, label = ''): string {
 export function dayRouteUrl(state: AppState, day: PlanDay): string {
   const s = state.settings;
   const base = basePoint(s);
-  const pts = day.stops.map((id) => stopOf(state, id)?.point).filter((x): x is LatLng => !!x);
-  const o = dayEnds(state, day);
-  const origin = o.start ?? base;
-  if (o.end === null) {
-    const last = pts.pop() ?? base;
+  const { opts, ids } = routeOpts(state, day);
+  const pts = ids.map((id) => stopOf(state, id)?.point).filter((x): x is LatLng => !!x);
+  const origin = opts.start ?? base;
+  if (opts.end === null) {
+    const last = pts.pop() ?? origin;
     return googleRouteUrl(pts, origin, last);
   }
-  return googleRouteUrl(pts, origin, base);
+  return googleRouteUrl(pts, origin, opts.end ?? base);
 }
 
 export function dayArea(state: AppState, day: PlanDay): string {

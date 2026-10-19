@@ -1,14 +1,23 @@
 import { useState } from 'preact/hooks';
-import { update, useAppState } from '../store';
+import { getState, update, useAppState } from '../store';
 import { FlagPills, Icon, Sheet, StatusPill, useNav, Field, type SheetSpec } from './components';
+import { ChatSheet } from './ChatSheet';
+import { readTheme, writeTheme, type ThemeChoice } from './theme';
 import { ActionGrid } from './FacilityDetail';
 import type { PostponeReason, Quarter } from '../domain/types';
 import { complete, currentControl, facilityOf, findControl, postpone, postponeAfterDeadline, primaryContact, todayOf } from '../domain/controls';
-import { addDays, addQuarters, fmtDate, fmtDateWeekday, fmtDuration, fmtQ, fmtQuarter, isWorkday, nextWorkdayOnOrAfter, quarterOf } from '../domain/dates';
-import { addStopToDay, dayArea, dayTimeline, ensureDay, fillSuggestions, moveStop, refreshDay } from '../domain/planner';
+import { addDays, addQuarters, fmtDate, fmtDateWeekday, fmtDuration, fmtQ, fmtQuarter, isOverdue, isWorkday, minutesToClock, nextWorkdayOnOrAfter, quarterOf, suggestedNextDue } from '../domain/dates';
+import { addStopToDay, dayArea, dayHasRoom, daySuggestions, dayTimeline, ensureDay, fillSuggestions, moveStop, refreshDay, removeStop } from '../domain/planner';
 import { addAdhoc, registerNewTime } from '../domain/actions';
 import { sortedDays } from '../domain/selectors';
-import { getDriveTime } from '../adapters/driveTime';
+import type { Nav } from './components';
+
+function offerFill(dayId: string | null, reason: string, nav: Nav, close: () => void) {
+  const fresh = getState();
+  const day = dayId ? fresh.days.find((d) => d.id === dayId) : undefined;
+  if (day && day.stops.length < fresh.settings.maxPerDay && dayHasRoom(fresh, day)) nav.sheet({ kind: 'fill', dayId: day.id, reason });
+  else close();
+}
 
 export function Sheets({ spec }: { spec: SheetSpec }) {
   const nav = useNav();
@@ -22,7 +31,25 @@ export function Sheets({ spec }: { spec: SheetSpec }) {
     case 'schedule': return <MoveSheet id={spec.controlId} close={close} schedule />;
     case 'fill': return <FillSheet dayId={spec.dayId} reason={spec.reason} close={close} />;
     case 'adhoc': return <AdhocSheet close={close} date={spec.date} />;
+    case 'offday': return <OffDaySheet id={spec.controlId} dayId={spec.dayId} close={close} />;
+    case 'today': return <TodaySheet date={spec.date} close={close} />;
+    case 'utsett': return <PostponePick close={close} />;
+    case 'more': return <MoreSheet close={close} />;
+    case 'chat': return <ChatSheet onClose={close} />;
   }
+}
+
+function dayDistance(a: string, b: string): number {
+  return Math.abs(new Date(`${a}T00:00:00`).getTime() - new Date(`${b}T00:00:00`).getTime());
+}
+
+/** Hjemme-tiden dagen får hvis stoppet legges dit. */
+function homeIfPlaced(state: ReturnType<typeof getState>, controlId: string, date: string): number | null {
+  const trial = structuredClone(state);
+  const day = ensureDay(trial, date);
+  moveStop(trial, controlId, day.id);
+  const placed = trial.days.find((d) => d.id === day.id);
+  return placed ? dayTimeline(trial, placed).endMin : null;
 }
 
 function PinSheet({ id, close }: { id: string; close: () => void }) {
@@ -78,8 +105,16 @@ function PostponeSheet({ id, close }: { id: string; close: () => void }) {
   if (!c) return null;
   const f = facilityOf(state, c);
   const after = postponeAfterDeadline(c, period);
+  const onDay = state.days.some((d) => d.stops.includes(id));
   return (
-    <Sheet title="Utsett kontroll" sub={`${f.customer} · frist ${fmtQuarter(c.due)}`} onClose={close}>
+    <Sheet title="Utsett" sub={`${f.customer} · frist ${fmtQuarter(c.due)}`} onClose={close}>
+      {onDay && (
+        <button class="btn block" onClick={() => {
+          const hole = update((s) => removeStop(s, id));
+          nav.sheet({ kind: 'offday', controlId: id, dayId: hole });
+        }}>Av i dag</button>
+      )}
+      {onDay && <div class="muted small mt12">Eller flytt fristen:</div>}
       <Field label="Årsak">
         <select class="sel" value={reason} onChange={(e) => setReason(e.currentTarget.value as PostponeReason)}>
           {REASONS.map((r) => <option>{r}</option>)}
@@ -96,8 +131,7 @@ function PostponeSheet({ id, close }: { id: string; close: () => void }) {
       <button class="btn primary block mt12" onClick={() => {
         const { holeDayId } = update((s) => postpone(s, id, { reason, text, newPeriod: period, followUp, requestedBy: by }));
         nav.toast(`Utsatt til ${fmtQ(period)}. Oppfølging ${fmtDate(followUp)}.`);
-        if (holeDayId) nav.sheet({ kind: 'fill', dayId: holeDayId, reason: `${f.customer} er tatt ut av ruten.` });
-        else close();
+        offerFill(holeDayId, `${f.customer} er tatt ut av ruten.`, nav, close);
       }}>Utsett</button>
     </Sheet>
   );
@@ -108,14 +142,15 @@ function CompleteSheet({ id, close }: { id: string; close: () => void }) {
   const nav = useNav();
   const today = todayOf(state.settings);
   const c = findControl(state, id);
-  const [date, setDate] = useState(c?.plannedDate && c.plannedDate <= today ? c.plannedDate : today);
-  const [due, setDue] = useState<Quarter | null>(null);
+  const initialDate = c?.plannedDate && c.plannedDate <= today ? c.plannedDate : today;
+  const [date, setDate] = useState(initialDate);
+  const [due, setDue] = useState<Quarter | null>(suggestedNextDue(initialDate));
   const [err, setErr] = useState<string | null>(null);
   if (!c) return null;
   const f = facilityOf(state, c);
-  const suggested = addQuarters(quarterOf(date), 16);
+  const suggested = suggestedNextDue(date);
   return (
-    <Sheet title="Marker som utført" sub={f.customer} onClose={close}>
+    <Sheet title="Utført" sub={f.customer} onClose={close}>
       <Field label="Kontrolldato"><input class="inp" type="date" value={date} max={today} onInput={(e) => setDate(e.currentTarget.value)} /></Field>
       <Field label="Ny frist for neste akkrediterte kontroll (påkrevd)">
         <select class="sel" value={due ? `${due.year}-${due.q}` : ''} onChange={(e) => { const v = e.currentTarget.value; if (!v) return setDue(null); const [y, q] = v.split('-').map(Number); setDue({ year: y, q: q as Quarter['q'] }); }}>
@@ -165,34 +200,26 @@ function MoveSheet({ id, close, schedule }: { id: string; close: () => void; sch
   const nav = useNav();
   const today = todayOf(state.settings);
   const c = findControl(state, id);
-  const [date, setDate] = useState(nextWorkdayOnOrAfter(addDays(today, state.settings.preNoticeDays + 1), state.settings.blockedDays));
+  const [date, setDate] = useState(nextWorkdayOnOrAfter(addDays(today, 1), state.settings.blockedDays));
   if (!c) return null;
   const f = facilityOf(state, c);
+  const from = state.days.find((d) => d.stops.includes(id));
   const days = sortedDays(state).filter((d) => d.date >= today && !d.stops.includes(id));
-  const near = (dId: string) => {
-    const d = state.days.find((x) => x.id === dId)!;
-    const ds = d.stops.map((s) => facilityOf(state, findControl(state, s)!).coords).filter(Boolean);
-    return f.coords && ds.length ? Math.min(...ds.map((p) => getDriveTime(p!, f.coords!))) : null;
-  };
-  const ranked = days.map((d) => ({ d, n: near(d.id) })).sort((a, b) => (a.n ?? 999) - (b.n ?? 999));
+  const ranked = days
+    .map((d) => ({ d, home: homeIfPlaced(state, id, d.date) }))
+    .sort((a, b) => dayDistance(a.d.date, today) - dayDistance(b.d.date, today) || a.d.date.localeCompare(b.d.date));
   return (
     <Sheet title={schedule ? 'Planlegg kontroll' : 'Flytt til annen dag'} sub={f.customer} onClose={close}>
-      <div class="muted small" style={{ marginBottom: 8 }}>Kjøredager sortert etter avstand. Dager som går over arbeidstiden markeres.</div>
+      <div class="muted small" style={{ marginBottom: 8 }}>Nærmeste datoer først. Hjemme-tiden er slik dagen blir med stoppet lagt til.</div>
       <div class="list">
-        {ranked.slice(0, 8).map(({ d, n }) => {
-          const trial = structuredClone(state);
-          moveStop(trial, id, d.id);
-          const tl = dayTimeline(trial, trial.days.find((x) => x.id === d.id)!);
-          return (
-            <button class="row" onClick={() => { update((s) => moveStop(s, id, d.id)); nav.toast(`Lagt til ${fmtDateWeekday(d.date)}`); close(); }}>
-              <div class="main">
-                <div class="t" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(d.date)}</div>
-                <div class="s">{d.stops.length} stopp · {dayArea(state, d)}{n !== null ? ` · ca. ${n} min unna` : ''}</div>
-              </div>
-              {tl.overtime ? <span class="pill solid-red">+{fmtDuration(tl.overtimeMin)}</span> : <span class="pill green">Går opp</span>}
-            </button>
-          );
-        })}
+        {ranked.slice(0, 8).map(({ d, home }) => (
+          <button class="row" onClick={() => { update((s) => moveStop(s, id, d.id)); nav.toast(`Lagt til ${fmtDateWeekday(d.date)}`); close(); }}>
+            <div class="main">
+              <div class="t" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(d.date)}</div>
+              <div class="s">{d.stops.length} stopp · {dayArea(state, d)}{home != null ? ` · hjemme ${minutesToClock(home)}` : ''}</div>
+            </div>
+          </button>
+        ))}
         {ranked.length === 0 && <div class="empty">Ingen kommende kjøredager. Velg en dato under.</div>}
       </div>
       <div class="section"><h2>Eller ny dag</h2></div>
@@ -205,6 +232,156 @@ function MoveSheet({ id, close, schedule }: { id: string; close: () => void; sch
         }}>Legg inn</button>
       </div>
       {!isWorkday(date, state.settings.blockedDays) && <div class="note warn">{fmtDate(date)} er ikke en virkedag.</div>}
+      {from && !schedule && (
+        <>
+          <button class="btn block mt12" onClick={() => {
+            const hole = update((s) => removeStop(s, id));
+            nav.sheet({ kind: 'offday', controlId: id, dayId: hole });
+          }}>Ta av dagen</button>
+          <button class="btn ghost block" onClick={() => nav.sheet({ kind: 'postpone', controlId: id })}>Utsett</button>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
+function OffDaySheet({ id, dayId, close }: { id: string; dayId: string | null; close: () => void }) {
+  const state = useAppState();
+  const nav = useNav();
+  const today = todayOf(state.settings);
+  const c = findControl(state, id);
+  const day = dayId ? state.days.find((d) => d.id === dayId) : undefined;
+  if (!c) return null;
+  const f = facilityOf(state, c);
+  const home = day && day.stops.length ? dayTimeline(state, day).endMin : null;
+  const fills = day && day.stops.length < state.settings.maxPerDay && dayHasRoom(state, day) ? fillSuggestions(state, day.id, 4) : [];
+  const dates = new Set<string>();
+  let cursor = today;
+  for (let n = 0; dates.size < 8 && n < 24; n++) {
+    cursor = nextWorkdayOnOrAfter(addDays(cursor, 1), state.settings.blockedDays);
+    if (cursor !== day?.date) dates.add(cursor);
+  }
+  for (const d of state.days) if (d.date >= today && d.date !== day?.date) dates.add(d.date);
+  const nearest = [...dates].sort((a, b) => dayDistance(a, today) - dayDistance(b, today) || a.localeCompare(b)).slice(0, 6);
+  return (
+    <Sheet title="Tatt av dagen" sub={f.customer} onClose={close}>
+      <div class="note">
+        {day && home != null ? <>Hjemme ca. <b>{minutesToClock(home)}</b> på {fmtDateWeekday(day.date)}.</> : 'Stoppet er ute av ruten.'}
+      </div>
+      {fills.length > 0 && day && (
+        <>
+          <div class="section"><h2>Fyll ledig plass</h2></div>
+          <div class="list">
+            {fills.map((s) => (
+              <button class="row" onClick={() => { update((st) => moveStop(st, s.control.id, day.id)); nav.toast(`${s.facility.customer} lagt til`); close(); }}>
+                <div class="main">
+                  <div class="t">{s.facility.customer}</div>
+                  <div class="s">{s.facility.address.place} · ca. {s.nearMin} min unna</div>
+                </div>
+                {s.overdue ? <span class="pill solid-red">Forfalt</span> : <span class="pill grey">{fmtQ(s.control.due)}</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      <div class="section"><h2>Flytt til en annen dag</h2></div>
+      <div class="list">
+        {nearest.map((date) => {
+          const end = homeIfPlaced(state, id, date);
+          return (
+            <button class="row" onClick={() => {
+              update((s) => addStopToDay(s, id, ensureDay(s, date).id));
+              nav.toast(`Lagt til ${fmtDateWeekday(date)}`);
+              close();
+            }}>
+              <div class="main">
+                <div class="t" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(date)}</div>
+                <div class="s">{end != null ? `hjemme ${minutesToClock(end)}` : ''}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <button class="btn ghost block mt12" onClick={() => nav.sheet({ kind: 'postpone', controlId: id })}>Utsett</button>
+    </Sheet>
+  );
+}
+
+function TodaySheet({ date, close }: { date: string; close: () => void }) {
+  const state = useAppState();
+  const nav = useNav();
+  const today = todayOf(state.settings);
+  const picks = daySuggestions(state, date, 10);
+  return (
+    <Sheet title={`Legg på ${fmtDate(date)}`} sub="Forfalte og anlegg i nærheten med frist i kvartalet" onClose={close}>
+      <div class="list">
+        {picks.map((p) => (
+          <button class="row" onClick={() => {
+            update((s) => addStopToDay(s, p.control.id, ensureDay(s, date).id));
+            nav.toast(`${p.facility.customer} er lagt på dagen`);
+            close();
+          }}>
+            <div class="main">
+              <div class="t">{p.facility.customer}{p.overdue || isOverdue(p.control.due, today) ? ' · forfalt' : ''}</div>
+              <div class="s">{p.facility.address.place} · {p.drive} min fra basen</div>
+            </div>
+          </button>
+        ))}
+        {picks.length === 0 && <div class="empty"><b>Ingen forslag</b>Søk i anleggslisten og legg stoppet på dagen derfra.</div>}
+      </div>
+    </Sheet>
+  );
+}
+
+function MoreSheet({ close }: { close: () => void }) {
+  const nav = useNav();
+  const [theme, setTheme] = useState<ThemeChoice>(readTheme());
+  const pick = (choice: ThemeChoice) => { writeTheme(choice); setTheme(choice); };
+  return (
+    <Sheet title="Mer" sub="Kunder, opplasting og innstillinger" onClose={close}>
+      <div class="chips" style={{ marginBottom: 12 }}>
+        {([['auto', 'Auto'], ['light', 'Lys'], ['dark', 'Mørk']] as [ThemeChoice, string][]).map(([k, label]) => (
+          <button class={`chip${theme === k ? ' on' : ''}`} onClick={() => pick(k)}>{label}</button>
+        ))}
+      </div>
+      <div class="list">
+        <button class="row" onClick={() => nav.push({ kind: 'facilities' })}><div class="main"><div class="t">Kunder</div><div class="s">Søk, filter og anleggskort</div></div></button>
+        <button class="row" onClick={() => nav.push({ kind: 'import' })}><div class="main"><div class="t">Last opp</div><div class="s">PDF, CSV eller manuelt</div></div></button>
+        <button class="row" onClick={() => nav.push({ kind: 'settings' })}><div class="main"><div class="t">Innstillinger</div><div class="s">Radius, maler og testdato</div></div></button>
+        <button class="row" onClick={() => nav.push({ kind: 'inbox' })}><div class="main"><div class="t">Innboks</div><div class="s">Svar, ring og import-gjennomgang</div></div></button>
+        <button class="row" onClick={() => nav.sheet({ kind: 'adhoc' })}><div class="main"><div class="t">Ad hoc</div><div class="s">Oppdrag utenom planen</div></div></button>
+      </div>
+    </Sheet>
+  );
+}
+
+function PostponePick({ close }: { close: () => void }) {
+  const state = useAppState();
+  const nav = useNav();
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const rows = state.controls
+    .filter((c) => c.status !== 'utfort' && c.status !== 'utsatt')
+    .map((c) => ({ c, f: facilityOf(state, c) }))
+    .filter(({ f }) => !needle || `${f.customer} ${f.address.place} ${f.address.street}`.toLowerCase().includes(needle))
+    .sort((a, b) => Number(!!b.c.plannedDate) - Number(!!a.c.plannedDate) || a.f.customer.localeCompare(b.f.customer, 'nb'))
+    .slice(0, 8);
+  return (
+    <Sheet title="Utsett" sub="Når kunden ber om å utsette" onClose={close}>
+      <Field label="Hvem utsetter kontrollen?">
+        <input class="inp" value={q} onInput={(e) => setQ(e.currentTarget.value)} placeholder="Kundenavn eller sted" />
+      </Field>
+      <div class="list mt12">
+        {rows.map(({ c, f }) => (
+          <button class="row" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>
+            <div class="main">
+              <div class="t">{f.customer}</div>
+              <div class="s">{f.address.place}{c.plannedDate ? ` · ${fmtDateWeekday(c.plannedDate)}` : ''}</div>
+            </div>
+          </button>
+        ))}
+        {rows.length === 0 && <div class="empty"><b>Ingen treff</b>Prøv et annet navn.</div>}
+      </div>
     </Sheet>
   );
 }
@@ -260,7 +437,7 @@ function AdhocSheet({ close, date: initial }: { close: () => void; date?: string
       <button class="btn primary block mt12" disabled={!v.customer || !v.postcode || !isWorkday(v.date, state.settings.blockedDays)} onClick={() => {
         const { dayId } = update((s) => addAdhoc(s, v));
         nav.toast('Oppdraget er lagt inn');
-        nav.sheet({ kind: 'fill', dayId, reason: 'Oppdraget er lagt inn.' });
+        offerFill(dayId, 'Oppdraget er lagt inn.', nav, close);
       }}>Legg inn og vis forslag</button>
     </Sheet>
   );
