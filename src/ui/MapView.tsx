@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { update, useAppState } from '../store';
-import { Icon, Seg, useNav } from './components';
+import { Icon, useNav } from './components';
 import type { AppState, Control, Facility, Quarter } from '../domain/types';
 import { currentControl, facilityOf, findControl, pinColor, todayOf, type PinColor } from '../domain/controls';
-import { addQuarters, fmtQ, fmtShortWeekday, isOverdue, nowStamp, quarterOf, sameQuarter } from '../domain/dates';
+import { fmtQ, fmtShortWeekday, isOverdue, nowStamp, quarterOf, sameQuarter } from '../domain/dates';
 import { PLACES, bearing } from '../domain/geo';
-import { basePoint, driveFromBase, stopOf } from '../domain/planner';
+import { basePoint, dayRouteUrl, driveFromBase, stopOf } from '../domain/planner';
 import { sortedDays } from '../domain/selectors';
 
 // ---------- Forenklet vektorkart over Sør-Norge (ingen kartfliser) ----------
@@ -90,42 +92,58 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
   const q0 = quarterOf(today);
   const [mode, setMode] = useState<'kart' | 'radar'>('kart');
   const [controlsOpen, setControlsOpen] = useState(false);
-  const [qKey, setQKey] = useState(`${q0.year}-${q0.q}`);
+  const [year, setYear] = useState(q0.year);
+  const [qNum, setQNum] = useState(String(q0.q));
+  const [tiles, setTiles] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [filter, setFilter] = useState<Filter>('alle');
   const [legend, setLegend] = useState(false);
-  const q: Quarter | null = qKey === 'alle' ? null : { year: Number(qKey.split('-')[0]), q: Number(qKey.split('-')[1]) as Quarter['q'] };
-  const pins = pinsFor(state, q, filter);
+  const q: Quarter | null = qNum === 'alle' ? null : { year, q: Number(qNum) as Quarter['q'] };
+  const years = [...new Set([q0.year, ...state.controls.map((c) => c.due.year)])].sort((a, b) => a - b);
+  let pins = pinsFor(state, q, filter);
+  if (!q) pins = pins.filter((p) => p.c.due.year === year || (year === q0.year && p.overdue));
   const days = sortedDays(state).filter((d) => d.date >= today && d.stops.length);
   const placingF = placing ? state.facilities.find((f) => f.id === placing) : null;
 
-  const quarters = [-1, 0, 1, 2, 3, 4].map((n) => addQuarters(q0, n));
+  const routeDay = dayId ? state.days.find((d) => d.id === dayId) : null;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
       <div class="mapctl top">
-        <button class="btn floating" onClick={() => setControlsOpen((v) => !v)} aria-expanded={controlsOpen}>{controlsOpen ? 'Skjul valg' : 'Valg'}</button>
-        <div class="floating" style={{ flex: '1 1 160px', padding: 2 }}>
-          <Seg value={mode} options={[['kart', 'Kart'], ['radar', 'Radar']]} onChange={setMode} />
+        <div class="floating" style={{ flex: '1 1 120px' }}>
+          <select class="sel" value={qNum} onChange={(e) => setQNum(e.currentTarget.value)} aria-label="Kvartal">
+            <option value="1">1. kvartal</option>
+            <option value="2">2. kvartal</option>
+            <option value="3">3. kvartal</option>
+            <option value="4">4. kvartal</option>
+            <option value="alle">Alle kvartal</option>
+          </select>
         </div>
+        <div class="floating" style={{ flex: '0 1 96px' }}>
+          <select class="sel" value={year} onChange={(e) => setYear(Number(e.currentTarget.value))} aria-label="År">
+            {years.map((y) => <option value={y}>{y}</option>)}
+          </select>
+        </div>
+        <button class="btn floating" onClick={() => setControlsOpen((v) => !v)} aria-expanded={controlsOpen}>{controlsOpen ? 'Skjul' : 'Valg'}</button>
+      </div>
+      <div class="mapctl routebar">
+        <div class="floating" style={{ flex: '1 1 140px' }}>
+          <select class="sel" value={dayId ?? ''} onChange={(e) => onDay(e.currentTarget.value || null)} aria-label="Vis rute for dag">
+            <option value="">Ingen rute</option>
+            {days.map((d) => <option value={d.id}>Rute {fmtShortWeekday(d.date)} · {d.stops.length}</option>)}
+          </select>
+        </div>
+        {routeDay && <a class="btn floating" href={dayRouteUrl(state, routeDay)} target="_blank" rel="noopener">Google Maps</a>}
       </div>
       {controlsOpen && (
         <div class="mapctl filters">
-          <div class="floating" style={{ flex: '1 1 150px' }}>
-            <select class="sel" value={qKey} onChange={(e) => setQKey(e.currentTarget.value)} aria-label="Kvartal og år">
-              {quarters.map((x) => <option value={`${x.year}-${x.q}`}>{fmtQ(x)}{sameQuarter(x, q0) ? ' · nå' : ''}</option>)}
-              <option value="alle">Alle åpne</option>
-            </select>
-          </div>
-          <div class="floating" style={{ flex: '1 1 150px' }}>
+          <div class="floating" style={{ flex: '1 1 140px' }}>
             <select class="sel" value={filter} onChange={(e) => setFilter(e.currentTarget.value as Filter)} aria-label="Statusfilter">
               {([['alle', 'Alle statuser'], ['red', 'Krever handling'], ['orange', 'Utsatt'], ['blue', 'Planlagt / varslet'], ['green', 'Bekreftet / utført'], ['grey', 'Mangler info']] as [Filter, string][]).map(([k, l]) => <option value={k}>{l}</option>)}
             </select>
           </div>
-          <div class="floating" style={{ flex: '1 1 150px' }}>
-            <select class="sel" value={dayId ?? ''} onChange={(e) => onDay(e.currentTarget.value || null)} aria-label="Vis rute for dag">
-              <option value="">Ingen rute</option>
-              {days.map((d) => <option value={d.id}>Rute {fmtShortWeekday(d.date)} · {d.stops.length} stopp</option>)}
-            </select>
+          <div class="floating" style={{ padding: 2 }}>
+            <button class={`btn${mode === 'kart' ? ' primary' : ''}`} onClick={() => setMode('kart')}>Kart</button>
+            <button class={`btn${mode === 'radar' ? ' primary' : ''}`} onClick={() => setMode('radar')}>Radar</button>
           </div>
         </div>
       )}
@@ -135,11 +153,31 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
           <button class="btn small" onClick={onPlaced}>Avbryt</button>
         </div>
       )}
-      {mode === 'kart' ? (
+      {mode === 'kart' && tiles ? (
+        <LeafletMap
+          pins={pins}
+          dayId={dayId}
+          placing={!!placingF}
+          onFail={() => setTiles(false)}
+          onPin={(f) => nav.sheet({ kind: 'pin', facilityId: f.id })}
+          onPlace={(lat, lng) => {
+            if (!placingF) return;
+            update((s) => {
+              const x = s.facilities.find((y) => y.id === placingF.id)!;
+              x.coords = { lat, lng, source: 'manuell' };
+              x.confidence.coords = 'høy';
+              x.flags = x.flags.filter((fl) => !/koordinater|adresse/i.test(fl));
+              x.log.push({ at: nowStamp(today), text: `Pinnen plassert manuelt (${lat.toFixed(4)}, ${lng.toFixed(4)})` });
+            });
+            nav.toast('Pinnen er plassert');
+            onPlaced();
+          }}
+        />
+      ) : mode === 'kart' ? (
         <VectorMap
           pins={pins}
           dayId={dayId}
-          chromeTop={controlsOpen ? 230 : 78}
+          chromeTop={controlsOpen ? 250 : 132}
           placing={!!placingF}
           onPin={(f) => nav.sheet({ kind: 'pin', facilityId: f.id })}
           onPlace={(lat, lng) => {
@@ -161,19 +199,99 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
       <button class="legend floating" style={{ border: 0, textAlign: 'left', cursor: 'pointer' }} onClick={() => setLegend(!legend)} aria-expanded={legend}>
         {legend ? (
           <>
-            <span><i class="dotc red" />Ikke planlagt / forfalt</span>
-            <span><i class="dotc orange" />Utsatt</span>
-            <span><i class="dotc blue" />Planlagt / varslet</span>
-            <span><i class="dotc green" />Bekreftet / utført</span>
-            <span><i class="dotc grey" />Mangler info</span>
-            <span class="muted">Rød ring = forfalt</span>
+            <span><i class="dotc red" />Røde pins er kundene</span>
+            <span>Trykk for status, frist og adresse</span>
+            <span>Linjen er ruta. Google Maps åpner kjøringen.</span>
           </>
         ) : (
-          <span><i class="dotc red" /><i class="dotc orange" /><i class="dotc blue" /><i class="dotc green" /><i class="dotc grey" /> {pins.length} anlegg{q ? ` · ${fmtQ(q)}` : ''}</span>
+          <span><i class="dotc red" /> {pins.length} kunder{q ? ` · ${fmtQ(q)}` : ` · ${year}`}{!tiles && mode === 'kart' ? ' · enkelt kart' : ''}</span>
         )}
       </button>
     </div>
   );
+}
+
+function LeafletMap({ pins, dayId, placing, onPin, onPlace, onFail }: { pins: PinItem[]; dayId: string | null; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void; onFail: () => void }) {
+  const state = useAppState();
+  const ref = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const groupRef = useRef<L.LayerGroup | null>(null);
+  const placeRef = useRef(onPlace);
+  const placingRef = useRef(placing);
+  placeRef.current = onPlace;
+  placingRef.current = placing;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || mapRef.current) return;
+    const map = L.map(el, { zoomControl: false }).setView([state.settings.baseLat, state.settings.baseLng], 8);
+    let errors = 0;
+    const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap',
+    });
+    tiles.on('tileerror', () => {
+      errors += 1;
+      if (errors >= 3) onFail();
+    });
+    tiles.addTo(map);
+    groupRef.current = L.layerGroup().addTo(map);
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      if (placingRef.current) placeRef.current(e.latlng.lat, e.latlng.lng);
+    });
+    mapRef.current = map;
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      map.remove();
+      mapRef.current = null;
+      groupRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const group = groupRef.current;
+    if (!map || !group) return;
+    group.clearLayers();
+    const pin = L.divIcon({ className: 'redpin', html: '<span></span>', iconSize: [28, 28], iconAnchor: [14, 14] });
+    const bounds: L.LatLngExpression[] = [];
+    for (const { f } of pins) {
+      if (!f.coords) continue;
+      const at: L.LatLngExpression = [f.coords.lat, f.coords.lng];
+      bounds.push(at);
+      L.marker(at, { icon: pin, keyboard: false }).on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        onPin(f);
+      }).addTo(group);
+    }
+    const day = dayId ? state.days.find((d) => d.id === dayId) : null;
+    const base: L.LatLngExpression = [state.settings.baseLat, state.settings.baseLng];
+    if (day) {
+      const line: L.LatLngExpression[] = [];
+      if (day.overnight !== 'hjem') line.push(base);
+      day.stops.forEach((id, i) => {
+        const st = stopOf(state, id);
+        if (!st) return;
+        const at: L.LatLngExpression = [st.point.lat, st.point.lng];
+        line.push(at);
+        bounds.push(at);
+        L.marker(at, {
+          icon: L.divIcon({ className: 'routenum', html: `<span>${i + 1}</span>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
+          keyboard: false,
+          zIndexOffset: 400,
+        }).addTo(group);
+      });
+      if (day.overnight !== 'ut') line.push(base);
+      if (line.length > 1) L.polyline(line, { color: '#c8231b', weight: 4, opacity: 0.9 }).addTo(group);
+    }
+    L.circleMarker(base, { radius: 7, color: '#fff', weight: 2, fillColor: '#23262b', fillOpacity: 1 }).addTo(group);
+    bounds.push(base);
+    if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [36, 36], maxZoom: 11 });
+  }, [pins, dayId, state]);
+
+  return <div class="mapwrap leafletmap" ref={ref} />;
 }
 
 function VectorMap({ pins, dayId, chromeTop, placing, onPin, onPlace }: { pins: PinItem[]; dayId: string | null; chromeTop: number; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void }) {
@@ -322,8 +440,7 @@ function VectorMap({ pins, dayId, chromeTop, placing, onPin, onPlace }: { pins: 
           return (
             <g class="pin" onClick={(e) => { e.stopPropagation(); if (!placing && moved.current < 6) onPin(f); }}>
               <circle cx={p.x} cy={p.y} r={24 * ratio} fill="transparent" />
-              {overdue && color !== 'red' && <circle cx={p.x} cy={p.y} r={21 * ratio} fill="none" stroke="var(--red)" stroke-width={2.4 * ratio} />}
-              <circle cx={p.x} cy={p.y} r={18 * ratio} fill={COLORS[color]} stroke="var(--surface)" stroke-width={2.2 * ratio} />
+              <circle cx={p.x} cy={p.y} r={18 * ratio} fill="var(--red)" stroke="var(--surface)" stroke-width={2.2 * ratio} />
             </g>
           );
         })}

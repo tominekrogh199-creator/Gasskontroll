@@ -69,6 +69,17 @@ export function homeStats(state: AppState): HomeStats {
   };
 }
 
+/** Åpne kontroller i kvartalet. Inneværende kvartal tar også med det som allerede er forfalt. */
+export function quarterWork(state: AppState, q: Quarter): Control[] {
+  const today = todayOf(state.settings);
+  const current = sameQuarter(q, quarterOf(today));
+  return openControls(state).filter((c) => {
+    if (c.adhocLabel || facilityOf(state, c).mergedInto) return false;
+    if (sameQuarter(c.due, q)) return true;
+    return current && isOverdue(c.due, today);
+  });
+}
+
 export function areaCounts(state: AppState, controls: Control[]): { area: string; count: number }[] {
   const m = new Map<string, number>();
   for (const c of controls) {

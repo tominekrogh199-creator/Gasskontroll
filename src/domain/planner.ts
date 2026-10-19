@@ -275,6 +275,66 @@ export function applyOptimizedOrder(state: AppState, dayId: string): void {
   refreshDay(state, day, true);
 }
 
+/**
+ * Plukker 3–4 kunder etter frist og nærhet og legger dem på dagen.
+ * Forfalte først, deretter dette kvartalet, innenfor kjøreradien, så lenge dagen går opp.
+ */
+export function buildQuickRoute(state: AppState, date: string): { dayId: string; added: string[] } | null {
+  const s = state.settings;
+  const today = todayOf(s);
+  const q = quarterOf(today);
+  const existing = state.days.find((d) => d.date === date);
+  if (existing?.locked) return null;
+  const already = existing?.stops.length ?? 0;
+  if (already >= s.maxPerDay) return null;
+  const planned = new Set(state.days.flatMap((d) => d.stops));
+  const base = basePoint(s);
+  const pool: { control: Control; facility: Facility; drive: number; overdue: boolean }[] = [];
+  for (const c of state.controls) {
+    if (planned.has(c.id) || !isOpenForPlanning(c)) continue;
+    if (c.status === 'utsatt' && !postponedEligible(c, q, today)) continue;
+    const f = facilityOf(state, c);
+    if (f.mergedInto || !f.coords) continue;
+    if (f.blockedPeriods.some((p) => date >= p.from && date <= p.to)) continue;
+    const drive = getDriveTime(base, f.coords);
+    if (drive > s.maxDriveMin) continue;
+    const overdue = isOverdue(c.due, today) || compareQuarter(c.due, q) < 0;
+    if (!overdue && compareQuarter(c.due, q) > 0) continue;
+    pool.push({ control: c, facility: f, drive, overdue });
+  }
+  const chosen: typeof pool = [];
+  const rejected = new Set<string>();
+  while (chosen.length + already < s.maxPerDay) {
+    let pick: (typeof pool)[number] | null = null;
+    let best = Infinity;
+    for (const item of pool) {
+      if (chosen.includes(item) || rejected.has(item.control.id)) continue;
+      const near = chosen.length ? Math.min(...chosen.map((g) => getDriveTime(g.facility.coords!, item.facility.coords!))) : item.drive;
+      const score = (item.overdue ? 0 : 1000) + near;
+      if (score < best) { best = score; pick = item; }
+    }
+    if (!pick?.facility.coords) break;
+    const stops: Stop[] = [
+      ...(existing ? existing.stops.map((id) => stopOf(state, id)).filter((x): x is Stop => !!x) : []),
+      ...chosen.map((g) => ({ controlId: g.control.id, point: g.facility.coords!, duration: durationOf(g.facility, s) })),
+      { controlId: pick.control.id, point: pick.facility.coords, duration: durationOf(pick.facility, s) },
+    ];
+    if (!fits(orderStops(stops, base, base), s)) {
+      rejected.add(pick.control.id);
+      continue;
+    }
+    chosen.push(pick);
+  }
+  if (!chosen.length) return null;
+  const day = ensureDay(state, date);
+  const added: string[] = [];
+  for (const item of chosen) {
+    addStopToDay(state, item.control.id, day.id);
+    added.push(item.control.id);
+  }
+  return { dayId: day.id, added };
+}
+
 /** Forfalte og nærliggende anlegg som kan legges på en valgt dag, også i dag. */
 export function daySuggestions(state: AppState, date: string, limit = 8): { control: Control; facility: Facility; drive: number; overdue: boolean }[] {
   const s = state.settings;

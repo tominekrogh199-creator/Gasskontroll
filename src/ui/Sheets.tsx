@@ -31,6 +31,7 @@ export function Sheets({ spec }: { spec: SheetSpec }) {
     case 'adhoc': return <AdhocSheet close={close} date={spec.date} />;
     case 'offday': return <OffDaySheet id={spec.controlId} dayId={spec.dayId} close={close} />;
     case 'today': return <TodaySheet date={spec.date} close={close} />;
+    case 'utsett': return <PostponePick close={close} />;
   }
 }
 
@@ -315,6 +316,37 @@ function TodaySheet({ date, close }: { date: string; close: () => void }) {
           </button>
         ))}
         {picks.length === 0 && <div class="empty"><b>Ingen forslag</b>Søk i anleggslisten og legg stoppet på dagen derfra.</div>}
+      </div>
+    </Sheet>
+  );
+}
+
+function PostponePick({ close }: { close: () => void }) {
+  const state = useAppState();
+  const nav = useNav();
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const rows = state.controls
+    .filter((c) => c.status !== 'utfort' && c.status !== 'utsatt')
+    .map((c) => ({ c, f: facilityOf(state, c) }))
+    .filter(({ f }) => !needle || `${f.customer} ${f.address.place} ${f.address.street}`.toLowerCase().includes(needle))
+    .sort((a, b) => Number(!!b.c.plannedDate) - Number(!!a.c.plannedDate) || a.f.customer.localeCompare(b.f.customer, 'nb'))
+    .slice(0, 8);
+  return (
+    <Sheet title="Utsettelse" sub="Når kunden ber om å utsette" onClose={close}>
+      <Field label="Hvem utsetter kontrollen?">
+        <input class="inp" value={q} onInput={(e) => setQ(e.currentTarget.value)} placeholder="Kundenavn eller sted" />
+      </Field>
+      <div class="list mt12">
+        {rows.map(({ c, f }) => (
+          <button class="row" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>
+            <div class="main">
+              <div class="t">{f.customer}</div>
+              <div class="s">{f.address.place}{c.plannedDate ? ` · ${fmtDateWeekday(c.plannedDate)}` : ''}</div>
+            </div>
+          </button>
+        ))}
+        {rows.length === 0 && <div class="empty"><b>Ingen treff</b>Prøv et annet navn.</div>}
       </div>
     </Sheet>
   );

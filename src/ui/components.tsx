@@ -68,7 +68,8 @@ export type SheetSpec =
   | { kind: 'adhoc'; date?: string }
   | { kind: 'schedule'; controlId: string }
   | { kind: 'offday'; controlId: string; dayId: string | null }
-  | { kind: 'today'; date: string };
+  | { kind: 'today'; date: string }
+  | { kind: 'utsett' };
 
 export const NavCtx = createContext<Nav>(null as unknown as Nav);
 export const useNav = () => useContext(NavCtx);

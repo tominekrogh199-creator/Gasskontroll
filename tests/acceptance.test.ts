@@ -1,9 +1,9 @@
 // Akseptansetester mot domenelogikken (samme kode som appen bruker).
 import { describe, it, expect } from 'vitest';
 import { buildDemo, defaultSettings } from '../src/data/demo';
-import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf, refreshDay, dayHasRoom, earliestPlanDate, earliestOverdueDate, durationOf, moveStopBy, setDayOrder, optimizePreview, applyOptimizedOrder, removeStop } from '../src/domain/planner';
+import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf, refreshDay, dayHasRoom, earliestPlanDate, earliestOverdueDate, durationOf, moveStopBy, setDayOrder, optimizePreview, applyOptimizedOrder, removeStop, buildQuickRoute, driveFromBase } from '../src/domain/planner';
 import { addDays, addQuarters, firstWorkdayOfQuarter, isOverdue, quarterOf, fmtDateWeekday, minutesToClock, clockToMinutes, compareQuarter, suggestedNextDue, quarterEnd } from '../src/domain/dates';
-import { atRiskControls, homeStats, sortedDays } from '../src/domain/selectors';
+import { areaName, atRiskControls, homeStats, quarterWork, sortedDays } from '../src/domain/selectors';
 import { complete, currentControl, facilityOf, pinColor, postpone, recipient, todayOf } from '../src/domain/controls';
 import { callList, markSent, reminderSendDate, runAutomations, draftsToApprove } from '../src/domain/notices';
 import { parseReport } from '../src/domain/reportParser';
@@ -370,5 +370,31 @@ describe('Frist i fare', () => {
     const late = st.controls.find((c) => !onDay.has(c.id) && c.status !== 'utfort' && isOverdue(c.due, today));
     expect(late).toBeTruthy();
     expect(list.some((c) => c.id === late!.id)).toBe(true);
+  });
+});
+
+describe('Lag rute', () => {
+  it('plukker tre eller fire kunder innen kjøreavstanden og legger dem på dagen', () => {
+    const today = '2026-10-19';
+    const st = demoAt(today);
+    const res = buildQuickRoute(st, today);
+    expect(res).not.toBeNull();
+    expect(res!.added.length).toBeGreaterThanOrEqual(3);
+    expect(res!.added.length).toBeLessThanOrEqual(st.settings.maxPerDay);
+    const day = st.days.find((d) => d.id === res!.dayId)!;
+    expect(day.date).toBe(today);
+    expect(dayTimeline(st, day).overtime).toBe(false);
+    for (const id of res!.added) {
+      const f = facilityOf(st, st.controls.find((c) => c.id === id)!);
+      expect(driveFromBase(st.settings, f)!).toBeLessThanOrEqual(st.settings.maxDriveMin);
+    }
+    const q = quarterOf(today);
+    const work = quarterWork(st, q);
+    const drammen = work.filter((c) => areaName(st, facilityOf(st, c).id) === 'Drammen og omegn');
+    expect(drammen.length).toBeGreaterThan(0);
+    expect(work.filter((c) => {
+      const drive = driveFromBase(st.settings, facilityOf(st, c));
+      return drive !== null && drive <= st.settings.maxDriveMin;
+    }).length).toBeGreaterThan(drammen.length);
   });
 });
