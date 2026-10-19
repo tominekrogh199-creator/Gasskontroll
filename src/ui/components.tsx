@@ -56,7 +56,7 @@ export type Screen =
 export interface Nav {
   push: (s: Screen) => void;
   pop: () => void;
-  tab: (t: TabKey, opts?: { dayId?: string; facilityId?: string }) => void;
+  tab: (t: TabKey, opts?: { dayId?: string; facilityId?: string; band?: number | 'drammen' }) => void;
   sheet: (s: SheetSpec | null) => void;
   toast: (msg: string) => void;
 }
@@ -73,10 +73,15 @@ export type SheetSpec =
   | { kind: 'offday'; controlId: string; dayId: string | null }
   | { kind: 'today'; date: string }
   | { kind: 'utsett' }
-  | { kind: 'more' };
+  | { kind: 'more' }
+  | { kind: 'chat' };
 
 export const NavCtx = createContext<Nav>(null as unknown as Nav);
 export const useNav = () => useContext(NavCtx);
+
+export function tap(ms = 12) {
+  try { navigator.vibrate?.(ms); } catch { /* nettleseren uten vibrasjon */ }
+}
 
 /** Én dør til kunder, opplasting, innstillinger, innboks og ad hoc. */
 export function MerButton() {

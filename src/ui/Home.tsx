@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 import { update, useAppState } from '../store';
-import { Icon, MerButton, useNav } from './components';
+import { Icon, MerButton, tap, useNav } from './components';
 import { facilityOf, findControl, primaryPhone, todayOf } from '../domain/controls';
-import { addDays, fmtDateWeekday, isWorkday, minutesToClock, nextWorkdayOnOrAfter } from '../domain/dates';
-import { buildQuickRoute, dayArea, dayTimeline } from '../domain/planner';
+import { addDays, fmtDateWeekday, isWorkday, minutesToClock, nextWorkdayOnOrAfter, quarterOf } from '../domain/dates';
+import { buildQuickRoute, dayArea, dayTimeline, driveFromBase } from '../domain/planner';
 import { draftsToApprove, kindLabel, readyToSend } from '../domain/notices';
-import { homeStats } from '../domain/selectors';
+import { areaName, homeStats, quarterWork } from '../domain/selectors';
 import type { PlanDay } from '../domain/types';
 
 function routeDateOf(state: ReturnType<typeof useAppState>, today: string): string {
@@ -57,10 +57,17 @@ export function Home() {
   }, [mail.map((m) => m.notice.id).join('|')]);
 
   const makeRoute = () => {
+    tap(16);
     const res = update((s) => buildQuickRoute(s, target));
     if (!res) nav.toast('Ingen ledige anlegg innen kjøreavstanden');
     else nav.toast(`${res.added.length} kunder lagt på ${fmtDateWeekday(target)}`);
   };
+  const work = quarterWork(state, quarterOf(today));
+  const within = work.filter((c) => {
+    const drive = driveFromBase(state.settings, facilityOf(state, c));
+    return drive !== null && drive <= state.settings.maxDriveMin;
+  });
+  const drammen = work.filter((c) => areaName(state, facilityOf(state, c).id) === 'Drammen og omegn');
 
   return (
     <div class="screen home">
@@ -88,6 +95,9 @@ export function Home() {
           <div class="subtitle">Ingen stopp i dag · hjemme fra {state.settings.baseName}</div>
           <button class="btn primary block" onClick={makeRoute}>
             <Icon.route />{target === today ? 'Lag rute for i dag' : `Lag rute ${shortDate(target)}`}
+          </button>
+          <button class="link block" onClick={() => nav.tab('kart', { band: state.settings.maxDriveMin })}>
+            {within.length} innen {state.settings.maxDriveMin === 120 ? '2 timer' : `${state.settings.maxDriveMin} min`} · {drammen.length} i Drammen
           </button>
           {next && <DayList day={next} upcoming />}
         </>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'preact/hooks';
 import { useAppState } from '../store';
-import { Icon, NavCtx, Toast, type Nav, type Screen, type SheetSpec, type TabKey } from './components';
+import { Icon, NavCtx, Toast, tap, type Nav, type Screen, type SheetSpec, type TabKey } from './components';
 import { Home } from './Home';
 import { MapView } from './MapView';
 import { Plan } from './Plan';
@@ -16,6 +16,7 @@ import { Sheets } from './Sheets';
 import { todayOf } from '../domain/controls';
 import { sortedDays } from '../domain/selectors';
 import type { AppState } from '../domain/types';
+import type { MapFocus } from '../domain/radius';
 
 function initialMapDay(state: AppState): string | null {
   const today = todayOf(state.settings);
@@ -31,6 +32,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [mapDay, setMapDay] = useState<string | null>(() => initialMapDay(state));
   const [placing, setPlacing] = useState<string | null>(null);
+  const [focus, setFocus] = useState<MapFocus>({ kind: 'min', min: 120 });
 
   const nav: Nav = useMemo(
     () => ({
@@ -42,6 +44,8 @@ export function App() {
         setTab(t);
         if (opts?.dayId !== undefined) setMapDay(opts.dayId);
         if (opts?.facilityId !== undefined) setPlacing(opts.facilityId);
+        if (opts?.band === 'drammen') setFocus({ kind: 'area', name: 'Drammen og omegn' });
+        else if (typeof opts?.band === 'number') setFocus({ kind: 'min', min: opts.band });
       },
       sheet: (s) => setSheet(s),
       toast: (m) => setToast(m),
@@ -62,7 +66,7 @@ export function App() {
       <div class="shell">
         {tab === 'idag' && <Home />}
         {tab === 'uke' && <Plan />}
-        {tab === 'kart' && <MapView dayId={mapDay} onDay={setMapDay} placing={placing} onPlaced={() => setPlacing(null)} />}
+        {tab === 'kart' && <MapView dayId={mapDay} onDay={setMapDay} placing={placing} onPlaced={() => setPlacing(null)} focus={focus} onFocus={setFocus} />}
         {top && (
           <div class="overlay" key={stack.length}>
             {top.kind === 'list' && <ControlList title={top.title} ids={top.ids} subtitle={top.subtitle} />}
@@ -78,9 +82,10 @@ export function App() {
             {top.kind === 'draft' && <DraftScreen noticeId={top.noticeId} />}
           </div>
         )}
+        {!top && <button class="fab" onClick={() => { tap(8); nav.sheet({ kind: 'chat' }); }}>Spør</button>}
         <nav class="tabbar" aria-label="Hovedmeny">
           {tabs.map(([k, label, I]) => (
-            <button class={`tab${tab === k && !top ? ' active' : ''}`} onClick={() => nav.tab(k)} aria-current={tab === k}>
+            <button class={`tab${tab === k && !top ? ' active' : ''}`} onClick={() => { tap(6); nav.tab(k); }} aria-current={tab === k}>
               <I />
               {label}
             </button>

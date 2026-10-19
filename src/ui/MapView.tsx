@@ -8,7 +8,9 @@ import { currentControl, facilityOf, findControl, pinColor, todayOf, type PinCol
 import { fmtQ, fmtShortWeekday, isOverdue, nowStamp, quarterOf, sameQuarter } from '../domain/dates';
 import { PLACES, bearing } from '../domain/geo';
 import { basePoint, dayRouteUrl, driveFromBase, stopOf } from '../domain/planner';
-import { sortedDays } from '../domain/selectors';
+import { minutesToRadiusMeters } from '../adapters/driveTime';
+import { RING_MINUTES, type MapFocus } from '../domain/radius';
+import { areaName, sortedDays } from '../domain/selectors';
 
 // ---------- Forenklet vektorkart over Sør-Norge (ingen kartfliser) ----------
 
@@ -85,7 +87,7 @@ function pinsFor(state: AppState, q: Quarter | null, filter: Filter): PinItem[] 
   return out.sort((a, b) => rank[a.color] - rank[b.color]);
 }
 
-export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | null; onDay: (id: string | null) => void; placing: string | null; onPlaced: () => void }) {
+export function MapView({ dayId, onDay, placing, onPlaced, focus, onFocus }: { dayId: string | null; onDay: (id: string | null) => void; placing: string | null; onPlaced: () => void; focus: MapFocus; onFocus: (f: MapFocus) => void }) {
   const state = useAppState();
   const nav = useNav();
   const today = todayOf(state.settings);
@@ -101,6 +103,14 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
   const years = [...new Set([q0.year, ...state.controls.map((c) => c.due.year)])].sort((a, b) => a - b);
   let pins = pinsFor(state, q, filter);
   if (!q) pins = pins.filter((p) => p.c.due.year === year || (year === q0.year && p.overdue));
+  pins = pins.filter((p) => {
+    if (focus.kind === 'area') return areaName(state, p.f.id) === focus.name;
+    const drive = driveFromBase(state.settings, p.f);
+    return drive !== null && drive <= focus.min;
+  });
+  const rings: number[] = [...RING_MINUTES];
+  if (state.settings.maxDriveMin && !rings.includes(state.settings.maxDriveMin)) rings.push(state.settings.maxDriveMin);
+  const focusLabel = focus.kind === 'area' ? focus.name : focus.min === 120 ? 'innen 2 timer' : `innen ${focus.min} min`;
   const days = sortedDays(state).filter((d) => d.date >= today && d.stops.length);
   const placingF = placing ? state.facilities.find((f) => f.id === placing) : null;
 
@@ -140,6 +150,17 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
         </div>
         {routeDay && <a class="btn floating" href={dayRouteUrl(state, routeDay)} target="_blank" rel="noopener">Google Maps</a>}
       </div>
+      <div class="mapchips">
+        <div class="chips">
+          {RING_MINUTES.map((min) => (
+            <button class={`chip${focus.kind === 'min' && focus.min === min ? ' on' : ''}`} onClick={() => onFocus({ kind: 'min', min })}>{min === 120 ? 'Innen 2 timer' : `${min} min`}</button>
+          ))}
+          {state.settings.driveRadiusCustom && !RING_MINUTES.includes(state.settings.maxDriveMin as typeof RING_MINUTES[number]) && (
+            <button class={`chip${focus.kind === 'min' && focus.min === state.settings.maxDriveMin ? ' on' : ''}`} onClick={() => onFocus({ kind: 'min', min: state.settings.maxDriveMin })}>Innen {state.settings.maxDriveMin} min</button>
+          )}
+          <button class={`chip${focus.kind === 'area' ? ' on' : ''}`} onClick={() => onFocus({ kind: 'area', name: 'Drammen og omegn' })}>Drammen og omegn</button>
+        </div>
+      </div>
       {controlsOpen && (
         <div class="mapctl filters">
           <div class="floating" style={{ flex: '1 1 140px' }}>
@@ -163,6 +184,9 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
         <LeafletMap
           pins={pins}
           dayId={dayId}
+          focus={focus}
+          rings={rings}
+          onRing={(min) => onFocus({ kind: 'min', min })}
           placing={!!placingF}
           onFail={() => setTiles(false)}
           onPin={(f) => nav.sheet({ kind: 'pin', facilityId: f.id })}
@@ -183,7 +207,10 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
         <VectorMap
           pins={pins}
           dayId={dayId}
-          chromeTop={controlsOpen ? 250 : 132}
+          focus={focus}
+          rings={rings}
+          onRing={(min) => onFocus({ kind: 'min', min })}
+          chromeTop={controlsOpen ? 250 : 180}
           placing={!!placingF}
           onPin={(f) => nav.sheet({ kind: 'pin', facilityId: f.id })}
           onPlace={(lat, lng) => {
@@ -203,33 +230,30 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
         <Radar pins={pins} onPin={(f) => nav.sheet({ kind: 'pin', facilityId: f.id })} />
       )}
       <button class="legend floating" style={{ border: 0, textAlign: 'left', cursor: 'pointer' }} onClick={() => setLegend(!legend)} aria-expanded={legend}>
-        {legend ? (
+        <span><i class="dotc red" /> {pins.length} kunder · {focusLabel}{q ? ` · ${fmtQ(q)}` : ` · ${year}`}</span>
+        {routeDay && <span>Rute {fmtShortWeekday(routeDay.date)} · {routeDay.stops.length} stopp{routeNames ? ` · ${routeNames}` : ''}</span>}
+        {legend && (
           <>
-            <span><i class="dotc red" />Røde pins er kundene</span>
-            <span>Trykk for status, frist og adresse</span>
+            <span>Trykk en pin for status, frist og adresse</span>
             <span>Linjen er ruta. Google Maps åpner kjøringen.</span>
           </>
-        ) : (
-          routeDay ? (
-            <span>{fmtShortWeekday(routeDay.date)} · {routeDay.stops.length} stopp{routeNames ? ` · ${routeNames}` : ''}</span>
-          ) : (
-            <span><i class="dotc red" /> {pins.length} kunder{q ? ` · ${fmtQ(q)}` : ` · ${year}`}{!tiles && mode === 'kart' ? ' · enkelt kart' : ''}</span>
-          )
         )}
       </button>
     </div>
   );
 }
 
-function LeafletMap({ pins, dayId, placing, onPin, onPlace, onFail }: { pins: PinItem[]; dayId: string | null; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void; onFail: () => void }) {
+function LeafletMap({ pins, dayId, placing, onPin, onPlace, onFail, focus, rings, onRing }: { pins: PinItem[]; dayId: string | null; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void; onFail: () => void; focus: MapFocus; rings: number[]; onRing: (min: number) => void }) {
   const state = useAppState();
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const groupRef = useRef<L.LayerGroup | null>(null);
   const placeRef = useRef(onPlace);
   const placingRef = useRef(placing);
+  const ringRef = useRef(onRing);
   placeRef.current = onPlace;
   placingRef.current = placing;
+  ringRef.current = onRing;
 
   useEffect(() => {
     const el = ref.current;
@@ -265,6 +289,30 @@ function LeafletMap({ pins, dayId, placing, onPin, onPlace, onFail }: { pins: Pi
     const group = groupRef.current;
     if (!map || !group) return;
     group.clearLayers();
+    const baseLatLng = L.latLng(state.settings.baseLat, state.settings.baseLng);
+    let fitTo: L.LatLngBounds | null = null;
+    for (const min of [...rings].sort((a, b) => b - a)) {
+      const active = focus.kind === 'min' && focus.min === min;
+      const circle = L.circle(baseLatLng, {
+        radius: minutesToRadiusMeters(min),
+        color: active ? '#c8231b' : '#34619a',
+        weight: active ? 2.5 : 1.2,
+        fillColor: active ? '#c8231b' : '#34619a',
+        fillOpacity: active ? 0.07 : 0.03,
+      });
+      circle.on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        ringRef.current(min);
+      });
+      circle.addTo(group);
+      if (active) fitTo = circle.getBounds();
+      const north = L.latLng(state.settings.baseLat + minutesToRadiusMeters(min) / 111320, state.settings.baseLng);
+      L.marker(north, {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({ className: 'ringlabel', html: `<span>${min === 120 ? '2 t' : String(min)}</span>`, iconSize: [36, 16], iconAnchor: [18, 8] }),
+      }).addTo(group);
+    }
     const pin = L.divIcon({ className: 'redpin', html: '<span></span>', iconSize: [28, 28], iconAnchor: [14, 14] });
     const bounds: L.LatLngExpression[] = [];
     for (const { f } of pins) {
@@ -298,13 +346,19 @@ function LeafletMap({ pins, dayId, placing, onPin, onPlace, onFail }: { pins: Pi
     }
     L.circleMarker(base, { radius: 7, color: '#fff', weight: 2, fillColor: '#23262b', fillOpacity: 1 }).addTo(group);
     bounds.push(base);
-    if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [36, 36], maxZoom: 11 });
-  }, [pins, dayId, state]);
+    const pad = { paddingTopLeft: L.point(28, 72), paddingBottomRight: L.point(28, 168) };
+    if (!day && fitTo) map.fitBounds(fitTo, pad);
+    else if (bounds.length) {
+      const box = L.latLngBounds(bounds);
+      if (fitTo) box.extend(fitTo.getSouthWest()).extend(fitTo.getNorthEast());
+      map.fitBounds(box, { ...pad, maxZoom: 10 });
+    }
+  }, [pins, dayId, state, focus, rings.join(',')]);
 
   return <div class="mapwrap leafletmap" ref={ref} />;
 }
 
-function VectorMap({ pins, dayId, chromeTop, placing, onPin, onPlace }: { pins: PinItem[]; dayId: string | null; chromeTop: number; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void }) {
+function VectorMap({ pins, dayId, chromeTop, placing, onPin, onPlace, focus, rings, onRing }: { pins: PinItem[]; dayId: string | null; chromeTop: number; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void; focus: MapFocus; rings: number[]; onRing: (min: number) => void }) {
   const state = useAppState();
   const ref = useRef<HTMLDivElement>(null);
   const base = proj(state.settings.baseLat, state.settings.baseLng);
@@ -441,6 +495,17 @@ function VectorMap({ pins, dayId, chromeTop, placing, onPin, onPlace }: { pins: 
             <g>
               <circle cx={pt.x} cy={pt.y} r={1.6 * ratio} fill="var(--text-3)" />
               <text class="maplabel" x={pt.x + 4 * ratio} y={pt.y - 3 * ratio} style={{ fontSize: `${fs}px`, strokeWidth: `${3 * ratio}px` }}>{p.name}</text>
+            </g>
+          );
+        })}
+        {[...rings].sort((a, b) => b - a).map((min) => {
+          const edge = proj(state.settings.baseLat + minutesToRadiusMeters(min) / 111320, state.settings.baseLng);
+          const r = Math.hypot(edge.x - base.x, edge.y - base.y);
+          const active = focus.kind === 'min' && focus.min === min;
+          return (
+            <g class="pin" onClick={(e) => { e.stopPropagation(); onRing(min); }}>
+              <circle cx={base.x} cy={base.y} r={r} fill={active ? 'rgba(200,35,27,0.08)' : 'rgba(52,97,154,0.04)'} stroke={active ? 'var(--red)' : 'var(--blue)'} stroke-width={(active ? 2 : 1.1) * ratio} />
+              <text x={base.x + 4 * ratio} y={base.y - r - 2 * ratio} style={{ fontSize: `${10 * ratio}px`, fill: active ? 'var(--red)' : 'var(--blue)', fontWeight: 650 }}>{min === 120 ? '2 t' : `${min} min`}</text>
             </g>
           );
         })}

@@ -7,6 +7,7 @@ import { MERGE_FIELDS, DEFAULT_TEMPLATES } from '../domain/notices';
 import { deviceToday, firstWorkdayOfQuarter, fmtDate, fmtQuarter, holidayName, addQuarters, quarterOf } from '../domain/dates';
 import { currentControl, recipient, todayOf } from '../domain/controls';
 import { areaName, driveMinOf } from '../domain/selectors';
+import { readTheme, writeTheme } from './theme';
 import { STATUS_LABEL } from '../domain/types';
 
 function download(name: string, text: string, type: string) {
@@ -35,12 +36,8 @@ export function SettingsScreen() {
   const s = state.settings;
   const today = todayOf(s);
   const [blocked, setBlocked] = useState('');
-  const [theme, setTheme] = useState(() => { try { return localStorage.getItem('kontrollplan.theme') ?? 'auto'; } catch { return 'auto'; } });
-  useEffect(() => {
-    if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
-    else document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('kontrollplan.theme', theme); } catch { /* ignorer */ }
-  }, [theme]);
+  const [theme, setTheme] = useState(readTheme);
+  useEffect(() => { writeTheme(theme === 'light' || theme === 'dark' ? theme : 'auto'); }, [theme]);
 
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => update((st) => { st.settings[k] = v; });
   const num = (k: keyof Settings) => (e: any) => set(k, Number(e.currentTarget.value) as any);
@@ -132,7 +129,7 @@ export function SettingsScreen() {
 
       <Section title="Utseende">
         <div class="card pad">
-          <select class="sel" value={theme} onChange={(e) => setTheme(e.currentTarget.value)}>
+          <select class="sel" value={theme} onChange={(e) => setTheme(e.currentTarget.value as 'auto' | 'light' | 'dark')}>
             <option value="auto">Følg systemet</option>
             <option value="light">Lys</option>
             <option value="dark">Mørk</option>

@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks';
 import { getState, update, useAppState } from '../store';
 import { FlagPills, Icon, Sheet, StatusPill, useNav, Field, type SheetSpec } from './components';
+import { ChatSheet } from './ChatSheet';
+import { readTheme, writeTheme, type ThemeChoice } from './theme';
 import { ActionGrid } from './FacilityDetail';
 import type { PostponeReason, Quarter } from '../domain/types';
 import { complete, currentControl, facilityOf, findControl, postpone, postponeAfterDeadline, primaryContact, todayOf } from '../domain/controls';
@@ -33,6 +35,7 @@ export function Sheets({ spec }: { spec: SheetSpec }) {
     case 'today': return <TodaySheet date={spec.date} close={close} />;
     case 'utsett': return <PostponePick close={close} />;
     case 'more': return <MoreSheet close={close} />;
+    case 'chat': return <ChatSheet onClose={close} />;
   }
 }
 
@@ -332,8 +335,15 @@ function TodaySheet({ date, close }: { date: string; close: () => void }) {
 
 function MoreSheet({ close }: { close: () => void }) {
   const nav = useNav();
+  const [theme, setTheme] = useState<ThemeChoice>(readTheme());
+  const pick = (choice: ThemeChoice) => { writeTheme(choice); setTheme(choice); };
   return (
     <Sheet title="Mer" sub="Kunder, opplasting og innstillinger" onClose={close}>
+      <div class="chips" style={{ marginBottom: 12 }}>
+        {([['auto', 'Auto'], ['light', 'Lys'], ['dark', 'Mørk']] as [ThemeChoice, string][]).map(([k, label]) => (
+          <button class={`chip${theme === k ? ' on' : ''}`} onClick={() => pick(k)}>{label}</button>
+        ))}
+      </div>
       <div class="list">
         <button class="row" onClick={() => nav.push({ kind: 'facilities' })}><div class="main"><div class="t">Kunder</div><div class="s">Søk, filter og anleggskort</div></div></button>
         <button class="row" onClick={() => nav.push({ kind: 'import' })}><div class="main"><div class="t">Last opp</div><div class="s">PDF, CSV eller manuelt</div></div></button>

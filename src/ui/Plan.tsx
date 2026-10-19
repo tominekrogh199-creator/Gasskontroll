@@ -16,7 +16,7 @@ export function Plan() {
   const [early, setEarly] = useState(false);
   const [result, setResult] = useState<PlanResult | null>(null);
   const [week, setWeek] = useState(weekMonday(today));
-  const [openDate, setOpenDate] = useState(today);
+  const [openDate, setOpenDate] = useState<string | null>(null);
 
   const weekDates = [0, 1, 2, 3, 4].map((i) => addDays(week, i));
   const work = quarterWork(state, q);
@@ -67,7 +67,7 @@ export function Plan() {
             const d = state.days.find((x) => x.date === date && x.stops.length);
             const tl = d ? dayTimeline(state, d) : null;
             return (
-              <button class={`weekcell${openDate === date ? ' on' : ''}`} onClick={() => setOpenDate(date)}>
+              <button class={`weekcell${openDate === date ? ' on' : ''}`} onClick={() => setOpenDate(openDate === date ? null : date)}>
                 <div class="d">{fmtDateWeekday(date).split(' ')[0].slice(0, 3)}</div>
                 <div class="n">{date.slice(8, 10)}</div>
                 <div class="s">{d ? `${d.stops.length} stopp` : 'ledig'}</div>
@@ -77,32 +77,23 @@ export function Plan() {
             );
           })}
         </div>
-        <WeekDay date={openDate} />
+        {openDate && <WeekDay date={openDate} />}
       </Section>
 
-      <div class="card pad glance mt12">
-        <div class="kicker">Kvartal og kjøreavstand</div>
-        <div class="mt8">
-          <Seg value={String(q.q)} options={[['1', '1.'], ['2', '2.'], ['3', '3.'], ['4', '4.']]} onChange={(v) => { setQ({ year: q.year, q: Number(v) as Quarter['q'] }); setResult(null); }} />
-        </div>
-        <label class="field mt8">
-          <span>År</span>
-          <select class="sel" aria-label="År" value={q.year} onChange={(e) => { setQ({ year: Number(e.currentTarget.value), q: q.q }); setResult(null); }}>
-            {(years.length ? years : [q.year]).map((y) => <option value={y}>{y}</option>)}
-          </select>
-        </label>
-        <div class="muted small mt8">{fmtQuarter(q)}</div>
-        <div class="stats">
-          <button class="stat" onClick={() => nav.push({ kind: 'list', title: `Drammen og omegn · ${fmtQ(q)}`, subtitle: 'Kontroller i området dette kvartalet', ids: drammen.map((c) => c.id) })}>
-            <span class="n">{drammen.length}</span>
-            <span class="l">Drammen og omegn</span>
-          </button>
-          <button class="stat" onClick={() => nav.push({ kind: 'list', title: `${radiusLabel} · ${fmtQ(q)}`, subtitle: `Kjøretid fra ${state.settings.baseName} er innen ${state.settings.maxDriveMin} minutter`, ids: radius.map((c) => c.id) })}>
-            <span class="n">{radius.length}</span>
-            <span class="l">{radiusLabel}</span>
-          </button>
-        </div>
+      <div class="chips">
+        <button class="chip" onClick={() => nav.push({ kind: 'list', title: `Drammen og omegn · ${fmtQ(q)}`, subtitle: 'Kontroller i området dette kvartalet', ids: drammen.map((c) => c.id) })}>{drammen.length} Drammen og omegn</button>
+        <button class="chip" onClick={() => nav.push({ kind: 'list', title: `${radiusLabel} · ${fmtQ(q)}`, subtitle: `Kjøretid fra ${state.settings.baseName} er innen ${state.settings.maxDriveMin} minutter`, ids: radius.map((c) => c.id) })}>{radius.length} {radiusLabel}</button>
+        <button class="chip" onClick={() => nav.tab('kart', { band: state.settings.maxDriveMin })}>Vis på kart</button>
       </div>
+      <div class="mt8">
+        <Seg value={String(q.q)} options={[['1', '1.'], ['2', '2.'], ['3', '3.'], ['4', '4.']]} onChange={(v) => { setQ({ year: q.year, q: Number(v) as Quarter['q'] }); setResult(null); }} />
+      </div>
+      <label class="field mt8">
+        <span>År · {fmtQuarter(q)}</span>
+        <select class="sel" aria-label="År" value={q.year} onChange={(e) => { setQ({ year: Number(e.currentTarget.value), q: q.q }); setResult(null); }}>
+          {(years.length ? years : [q.year]).map((y) => <option value={y}>{y}</option>)}
+        </select>
+      </label>
 
       <label class="toggle card pad mt8" style={{ padding: '6px 16px' }}>
         <span class="small">Ta med tidlige: frist {fmtQ(addQuarters(q, 1))}, maks {state.settings.earlyMaxMin} min fra en dag med ledig plass</span>
