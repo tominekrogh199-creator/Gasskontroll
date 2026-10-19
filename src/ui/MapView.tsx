@@ -105,6 +105,12 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
   const placingF = placing ? state.facilities.find((f) => f.id === placing) : null;
 
   const routeDay = dayId ? state.days.find((d) => d.id === dayId) : null;
+  const routeNames = routeDay
+    ? routeDay.stops.map((id) => {
+      const c = findControl(state, id);
+      return c ? facilityOf(state, c).customer : '';
+    }).filter(Boolean).join(' → ')
+    : '';
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
@@ -204,7 +210,11 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
             <span>Linjen er ruta. Google Maps åpner kjøringen.</span>
           </>
         ) : (
-          <span><i class="dotc red" /> {pins.length} kunder{q ? ` · ${fmtQ(q)}` : ` · ${year}`}{!tiles && mode === 'kart' ? ' · enkelt kart' : ''}</span>
+          routeDay ? (
+            <span>{fmtShortWeekday(routeDay.date)} · {routeDay.stops.length} stopp{routeNames ? ` · ${routeNames}` : ''}</span>
+          ) : (
+            <span><i class="dotc red" /> {pins.length} kunder{q ? ` · ${fmtQ(q)}` : ` · ${year}`}{!tiles && mode === 'kart' ? ' · enkelt kart' : ''}</span>
+          )
         )}
       </button>
     </div>

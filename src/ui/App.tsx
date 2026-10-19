@@ -6,14 +6,13 @@ import { MapView } from './MapView';
 import { Plan } from './Plan';
 import { Facilities, ControlList } from './Facilities';
 import { FacilityDetail } from './FacilityDetail';
-import { Inbox, DraftScreen } from './Inbox';
+import { Approve, Inbox, DraftScreen } from './Inbox';
 import { Review } from './Review';
 import { ImportScreen } from './ImportScreen';
 import { SettingsScreen } from './Settings';
 import { RouteScreen } from './RouteScreen';
 import { DaySheet } from './DaySheet';
 import { Sheets } from './Sheets';
-import { draftsToApprove, lateDrafts, callList } from '../domain/notices';
 import { todayOf } from '../domain/controls';
 import { sortedDays } from '../domain/selectors';
 import type { AppState } from '../domain/types';
@@ -26,7 +25,7 @@ function initialMapDay(state: AppState): string | null {
 
 export function App() {
   const state = useAppState();
-  const [tab, setTab] = useState<TabKey>('hjem');
+  const [tab, setTab] = useState<TabKey>('idag');
   const [stack, setStack] = useState<Screen[]>([]);
   const [sheet, setSheet] = useState<SheetSpec | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -50,29 +49,26 @@ export function App() {
     [],
   );
 
-  const inboxCount = draftsToApprove(state).length + callList(state).length;
-  const late = lateDrafts(state).length > 0;
   const top = stack[stack.length - 1];
 
   const tabs: [TabKey, string, () => any][] = [
-    ['hjem', 'Hjem', Icon.home],
+    ['idag', 'I dag', Icon.home],
+    ['uke', 'Uke', Icon.plan],
     ['kart', 'Kart', Icon.map],
-    ['plan', 'Plan', Icon.plan],
-    ['anlegg', 'Anlegg', Icon.list],
-    ['innboks', 'Innboks', Icon.inbox],
   ];
 
   return (
     <NavCtx.Provider value={nav}>
       <div class="shell">
-        {tab === 'hjem' && <Home />}
+        {tab === 'idag' && <Home />}
+        {tab === 'uke' && <Plan />}
         {tab === 'kart' && <MapView dayId={mapDay} onDay={setMapDay} placing={placing} onPlaced={() => setPlacing(null)} />}
-        {tab === 'plan' && <Plan />}
-        {tab === 'anlegg' && <Facilities />}
-        {tab === 'innboks' && <Inbox />}
         {top && (
           <div class="overlay" key={stack.length}>
             {top.kind === 'list' && <ControlList title={top.title} ids={top.ids} subtitle={top.subtitle} />}
+            {top.kind === 'facilities' && <Facilities />}
+            {top.kind === 'inbox' && <Inbox />}
+            {top.kind === 'approve' && <Approve />}
             {top.kind === 'facility' && <FacilityDetail id={top.id} />}
             {top.kind === 'route' && <RouteScreen dayId={top.dayId} />}
             {top.kind === 'daysheet' && <DaySheet dayId={top.dayId} />}
@@ -87,7 +83,6 @@ export function App() {
             <button class={`tab${tab === k && !top ? ' active' : ''}`} onClick={() => nav.tab(k)} aria-current={tab === k}>
               <I />
               {label}
-              {k === 'innboks' && inboxCount > 0 && <span class="dot" style={late ? {} : { background: 'var(--graphite)', color: 'var(--bg)' }}>{inboxCount}</span>}
             </button>
           ))}
         </nav>

@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { update, useAppState } from '../store';
 import { Empty, Icon, NavBar, Row, Section, useNav } from './components';
-import type { Notice } from '../domain/types';
+import type { Control, Notice } from '../domain/types';
 import { facilityOf, primaryPhone, todayOf } from '../domain/controls';
 import { addDays, fmtDate, fmtDateWeekday } from '../domain/dates';
 import { approve, awaitingResponse, callList, draftsToApprove, kindLabel, markSent, readyToSend, regenerate, stopNotice } from '../domain/notices';
@@ -36,7 +36,23 @@ export function SendButtons({ n, small }: { n: Notice; small?: boolean }) {
   );
 }
 
-export function Inbox() {
+function DraftRow({ notice: n, control: c }: { notice: Notice; control: Control }) {
+  const state = useAppState();
+  const nav = useNav();
+  const today = todayOf(state.settings);
+  const f = facilityOf(state, c);
+  const lateN = n.sendDate <= today;
+  return (
+    <Row
+      title={f.customer}
+      sub={`${kindLabel(n.kind)} · ${c.plannedDate ? `besøk ${fmtDate(c.plannedDate)}` : 'uten dato'}`}
+      right={<span class={`pill ${lateN ? 'solid-red' : 'grey'}`}>{lateN ? 'Send i dag' : `Sendes ${n.sendDate.slice(8, 10)}.${n.sendDate.slice(5, 7)}.`}</span>}
+      onClick={() => nav.push({ kind: 'draft', noticeId: n.id })}
+    />
+  );
+}
+
+export function Approve() {
   const state = useAppState();
   const nav = useNav();
   const today = todayOf(state.settings);
@@ -46,27 +62,10 @@ export function Inbox() {
   const later = drafts.filter((d) => d.notice.sendDate > soonLimit);
   const [showLater, setShowLater] = useState(false);
   const ready = readyToSend(state);
-  const awaiting = awaitingResponse(state).filter((c) => !c.callReason);
-  const calls = callList(state);
-  const review = state.facilities.filter((f) => f.reviewPending);
-
-  const draftRow = ({ notice: n, control: c }: (typeof drafts)[number]) => {
-    const f = facilityOf(state, c);
-    const lateN = n.sendDate <= today;
-    return (
-      <Row
-        title={f.customer}
-        sub={`${kindLabel(n.kind)} · ${c.plannedDate ? `besøk ${fmtDate(c.plannedDate)}` : 'uten dato'}`}
-        right={<span class={`pill ${lateN ? 'solid-red' : 'grey'}`}>{lateN ? 'Send i dag' : `Sendes ${n.sendDate.slice(8, 10)}.${n.sendDate.slice(5, 7)}.`}</span>}
-        onClick={() => nav.push({ kind: 'draft', noticeId: n.id })}
-      />
-    );
-  };
-
+  const [perm, setPerm] = useState(typeof Notification === 'undefined' ? 'no' : Notification.permission);
   return (
     <div class="screen">
-      <div class="topbar"><h1>Innboks</h1></div>
-
+      <NavBar title="Godkjenn" />
       {ready.length > 0 && (
         <Section title={`Klar til sending · ${ready.length}`}>
           <div class="list">
@@ -82,21 +81,35 @@ export function Inbox() {
           </div>
         </Section>
       )}
-
       <Section
         title={`Til godkjenning · ${soon.length}`}
-        action={soon.length > 1 ? <button class="link" onClick={() => { update((s) => draftsToApprove(s).filter((d) => d.notice.sendDate <= soonLimit).forEach((d) => approve(s, d.notice))); nav.toast(`${soon.length} utkast godkjent`); }}>Godkjenn alle</button> : undefined}
+        action={soon.length > 1 ? <button class="link" onClick={() => { update((s) => draftsToApprove(s).filter((d) => d.notice.sendDate <= soonLimit).forEach((d) => approve(s, d.notice))); nav.toast(`${soon.length} utkast godkjent`); }}>Godkjenn</button> : undefined}
       >
         <div class="list">
-          {soon.length ? soon.map(draftRow) : <Empty title="Ingen utkast å godkjenne">{later.length ? 'Ingen utkast skal sendes de neste 14 dagene.' : 'Utkast lages automatisk når kontroller planlegges.'}</Empty>}
+          {soon.length ? soon.map((d) => <DraftRow notice={d.notice} control={d.control} />) : <Empty title="Ingen utkast å godkjenne">{later.length ? 'Ingen utkast skal sendes de neste 14 dagene.' : 'Utkast lages automatisk når kontroller planlegges.'}</Empty>}
         </div>
         {later.length > 0 && (
           <>
             <button class="btn ghost block mt8" onClick={() => setShowLater(!showLater)}>{showLater ? 'Skjul' : 'Vis'} senere utkast ({later.length})</button>
-            {showLater && <div class="list mt8">{later.map(draftRow)}</div>}
+            {showLater && <div class="list mt8">{later.map((d) => <DraftRow notice={d.notice} control={d.control} />)}</div>}
           </>
         )}
       </Section>
+      {perm === 'default' && <button class="btn ghost block mt12" onClick={async () => { if (typeof Notification === 'undefined') return; setPerm(await Notification.requestPermission()); }}>Varsle meg på telefonen</button>}
+    </div>
+  );
+}
+
+export function Inbox() {
+  const state = useAppState();
+  const nav = useNav();
+  const awaiting = awaitingResponse(state).filter((c) => !c.callReason);
+  const calls = callList(state);
+  const review = state.facilities.filter((f) => f.reviewPending);
+
+  return (
+    <div class="screen">
+      <NavBar title="Innboks" />
 
       <Section title={`Svar som må registreres · ${awaiting.length}`}>
         <div class="list">
@@ -112,7 +125,7 @@ export function Inbox() {
                 <div class="btnrow" style={{ width: '100%' }}>
                   <button class="btn small" onClick={() => { update((s) => registerConfirmed(s, c.id)); nav.toast('Bekreftet'); }}>Bekreftet</button>
                   <button class="btn small" onClick={() => nav.sheet({ kind: 'newtime', controlId: c.id })}>Ny tid</button>
-                  <button class="btn small" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsettelse</button>
+                  <button class="btn small" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsett</button>
                   <button class="btn small" onClick={() => { update((s) => registerNoAnswer(s, c.id)); nav.toast('Purring laget'); }}>Ingen svar</button>
                 </div>
               </div>
@@ -136,7 +149,7 @@ export function Inbox() {
                   <a class="btn small primary" href={phone ? `tel:${phone.replace(/\s/g, '')}` : undefined} style={phone ? {} : { opacity: 0.4, pointerEvents: 'none' }}><Icon.phone />{phone ?? 'Ingen telefon'}</a>
                   <button class="btn small" onClick={() => { update((s) => registerConfirmed(s, c.id)); nav.toast('Bekreftet'); }}>Bekreftet</button>
                   <button class="btn small" onClick={() => nav.sheet({ kind: 'newtime', controlId: c.id })}>Ny tid</button>
-                  <button class="btn small" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsettelse</button>
+                  <button class="btn small" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsett</button>
                 </div>
               </div>
             );

@@ -340,3 +340,12 @@ textarea.inp { min-height: 160px; line-height: 1.45; resize: vertical; }
 .draft-body { white-space: pre-wrap; font-size: 15px; }
 hr.sep { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 .legend .dotc { display: inline-block; margin-right: 3px; vertical-align: -1px; }
+button.pill { border: 0; cursor: pointer; font: inherit; }
+.kicker { font-size: 12px; letter-spacing: 0.06em; font-weight: 650; color: var(--text-3); text-transform: uppercase; }
+.dstop + .dstop { border-top: 1px solid var(--line); }
+.dstop-main { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; text-align: left; padding: 12px 0; cursor: pointer; color: inherit; }
+.dstop-main .when { width: 52px; flex: none; font-variant-numeric: tabular-nums; font-weight: 650; }
+.dstop-main .who { flex: 1; min-width: 0; }
+.dstop-main b { display: block; font-size: 16px; }
+.dstop-main small { display: block; color: var(--text-2); font-size: 13px; }
+.dstop-actions { padding: 0 0 12px; }

@@ -16,7 +16,7 @@ export function ImportScreen() {
   const [mode, setMode] = useState<'pdf' | 'csv' | 'manuell'>('pdf');
   return (
     <div class="screen">
-      <NavBar title="Importer anlegg" />
+      <NavBar title="Last opp" />
       <Seg value={mode} options={[['pdf', 'PDF-rapporter'], ['csv', 'CSV'], ['manuell', 'Manuelt']]} onChange={setMode} />
       {mode === 'pdf' && <PdfImport />}
       {mode === 'csv' && <CsvImport />}
@@ -179,8 +179,8 @@ function CsvImport() {
                 }
               });
               const pairs = sameAddressPairs(getState()).length;
-              setDone(`${n} anlegg importert, ${rev} til gjennomgang.${pairs ? ` ${pairs} par har samme adresse – slå dem sammen under Anlegg.` : ''}`);
-            }}>Importer</button>
+              setDone(`${n} anlegg lastet opp, ${rev} til gjennomgang.${pairs ? ` ${pairs} par har samme adresse – slå dem sammen under Kunder.` : ''}`);
+            }}>Last opp</button>
             {(map.objectId === undefined || map.nextDue === undefined) && <div class="muted small mt8">Objekt ID og neste frist må kobles.</div>}
             {done && <div class="note mt8">{done} <button class="btn small" onClick={() => nav.push({ kind: 'review' })}>Gjennomgang</button></div>}
           </div>

@@ -1,11 +1,11 @@
 import { useState } from 'preact/hooks';
 import { update, useAppState } from '../store';
-import { Icon, Section, useNav } from './components';
+import { Icon, MerButton, Row, Section, Seg, useNav } from './components';
 import type { PlanDay, Quarter } from '../domain/types';
-import { addDays, addQuarters, fmtDate, fmtDateWeekday, fmtDuration, fmtHours, fmtQ, fmtQuarter, minutesToClock, quarterEnd, quarterOf, quarterStart, weekMonday } from '../domain/dates';
-import { applyOptimizedOrder, applyOvernight, candidatesFor, dayArea, dayHasRoom, dayRouteUrl, dayTimeline, makePlan, moveStopBy, optimizePreview, overnightOption, type PlanResult } from '../domain/planner';
-import { findControl, facilityOf, primaryPhone, todayOf } from '../domain/controls';
-import { areaCounts, sortedDays } from '../domain/selectors';
+import { addDays, addQuarters, fmtDate, fmtDateWeekday, fmtDuration, fmtHours, fmtQ, fmtQuarter, minutesToClock, quarterOf, weekMonday } from '../domain/dates';
+import { applyOptimizedOrder, applyOvernight, dayArea, dayHasRoom, dayRouteUrl, dayTimeline, driveFromBase, makePlan, moveStopBy, optimizePreview, overnightOption, type PlanResult } from '../domain/planner';
+import { findControl, facilityOf, todayOf } from '../domain/controls';
+import { areaName, homeStats, quarterWork } from '../domain/selectors';
 import { draftsToApprove, preNoticeSendDate } from '../domain/notices';
 
 export function Plan() {
@@ -18,14 +18,17 @@ export function Plan() {
   const [week, setWeek] = useState(weekMonday(today));
   const [openDate, setOpenDate] = useState(today);
 
-  const days = sortedDays(state).filter((d) => d.date >= quarterStart(q) && d.date <= quarterEnd(q));
   const weekDates = [0, 1, 2, 3, 4].map((i) => addDays(week, i));
-  const cands = candidatesFor(state, q, { includePlanned: true });
-  const overdue = cands.list.filter((c) => c.overdue).length;
-  const plannedIds = new Set(state.days.flatMap((d) => d.stops));
-  const unplanned = cands.list.filter((c) => !plannedIds.has(c.control.id));
-  const areas = areaCounts(state, cands.list.map((c) => c.control));
-  const totalDrive = days.reduce((a, d) => a + dayTimeline(state, d).driveMin, 0);
+  const work = quarterWork(state, q);
+  const drammen = work.filter((c) => areaName(state, facilityOf(state, c).id) === 'Drammen og omegn');
+  const radius = work.filter((c) => {
+    const drive = driveFromBase(state.settings, facilityOf(state, c));
+    return drive !== null && drive <= state.settings.maxDriveMin;
+  });
+  const hours = state.settings.maxDriveMin / 60;
+  const radiusLabel = hours === 2 ? 'Innen 2 timer' : `Innen ${String(hours).replace('.', ',')} timer`;
+  const years = [...new Set(state.controls.map((c) => c.due.year))].sort((a, b) => a - b);
+  const haster = homeStats(state).atRisk;
 
   const run = () => {
     const r = update((s) => makePlan(s, q, { early }));
@@ -36,27 +39,9 @@ export function Plan() {
   return (
     <div class="screen">
       <div class="topbar">
-        <h1>Plan</h1>
-        <button class="iconbtn labeled" onClick={() => nav.sheet({ kind: 'adhoc' })} aria-label="Ad hoc-oppdrag"><Icon.plus />Ad hoc</button>
+        <h1>Uke</h1>
+        <MerButton />
       </div>
-      <div class="card pad" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button class="iconbtn" onClick={() => { setQ(addQuarters(q, -1)); setResult(null); }} aria-label="Forrige kvartal"><Icon.chevL /></button>
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontWeight: 700, fontSize: 19 }}>{fmtQuarter(q)}</div>
-          <div class="muted small">{cands.list.length} kandidater · {overdue} forfalt · {unplanned.length} ikke planlagt</div>
-        </div>
-        <button class="iconbtn" onClick={() => { setQ(addQuarters(q, 1)); setResult(null); }} aria-label="Neste kvartal" style={{ transform: 'scaleX(-1)' }}><Icon.chevL /></button>
-      </div>
-
-      <div class="chips mt8">
-        {areas.map((a) => <span class="chip">{a.area}: <b>{a.count}</b></span>)}
-      </div>
-
-      <label class="toggle card pad mt8" style={{ padding: '6px 16px' }}>
-        <span class="small">Ta med tidlige: frist {fmtQ(addQuarters(q, 1))}, maks {state.settings.earlyMaxMin} min fra en dag med ledig plass</span>
-        <input type="checkbox" checked={early} onChange={(e) => setEarly(e.currentTarget.checked)} />
-      </label>
-      <button class="btn primary block mt12" onClick={run}>{days.length ? 'Lag plan på nytt (ulåste dager)' : 'Lag plan'}</button>
 
       {result && (
         <div class="card pad mt12">
@@ -67,11 +52,11 @@ export function Plan() {
             : <div class="note">Alle kandidatene innenfor radius fikk en dag.</div>}
           {result.outOfRange.length > 0 && <div class="note amber">Utenfor kjøreradius ({state.settings.maxDriveMin} min), ikke planlagt: {result.outOfRange.map((c) => `${c.facility.customer} (${c.facility.address.place}, ca. ${fmtDuration(c.drive)})`).join(', ')}</div>}
           {result.noCoords.length > 0 && <div class="note amber">Mangler koordinater: {result.noCoords.map((c) => facilityOf(state, c).customer).join(', ')}</div>}
-          <div class="mt8"><b>{draftsToApprove(state).length}</b> utkast venter på godkjenning i Innboks.</div>
+          <div class="mt8"><b>{draftsToApprove(state).length}</b> utkast venter. Godkjenn dem fra e-post på I dag.</div>
         </div>
       )}
 
-      <Section title="Uka" action={<span class="muted small">{days.length} dager i kvartalet · ca. {fmtHours(totalDrive)}</span>}>
+      <Section title="Uka">
         <div class="card pad" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <button class="iconbtn" aria-label="Forrige uke" onClick={() => setWeek(addDays(week, -7))}><Icon.chevL /></button>
           <div style={{ flex: 1, textAlign: 'center', fontWeight: 650 }}>{fmtDate(weekDates[0]).slice(0, 5)} – {fmtDate(weekDates[4]).slice(0, 5)}</div>
@@ -94,6 +79,59 @@ export function Plan() {
         </div>
         <WeekDay date={openDate} />
       </Section>
+
+      <div class="card pad glance mt12">
+        <div class="kicker">Kvartal og kjøreavstand</div>
+        <div class="mt8">
+          <Seg value={String(q.q)} options={[['1', '1.'], ['2', '2.'], ['3', '3.'], ['4', '4.']]} onChange={(v) => { setQ({ year: q.year, q: Number(v) as Quarter['q'] }); setResult(null); }} />
+        </div>
+        <label class="field mt8">
+          <span>År</span>
+          <select class="sel" aria-label="År" value={q.year} onChange={(e) => { setQ({ year: Number(e.currentTarget.value), q: q.q }); setResult(null); }}>
+            {(years.length ? years : [q.year]).map((y) => <option value={y}>{y}</option>)}
+          </select>
+        </label>
+        <div class="muted small mt8">{fmtQuarter(q)}</div>
+        <div class="stats">
+          <button class="stat" onClick={() => nav.push({ kind: 'list', title: `Drammen og omegn · ${fmtQ(q)}`, subtitle: 'Kontroller i området dette kvartalet', ids: drammen.map((c) => c.id) })}>
+            <span class="n">{drammen.length}</span>
+            <span class="l">Drammen og omegn</span>
+          </button>
+          <button class="stat" onClick={() => nav.push({ kind: 'list', title: `${radiusLabel} · ${fmtQ(q)}`, subtitle: `Kjøretid fra ${state.settings.baseName} er innen ${state.settings.maxDriveMin} minutter`, ids: radius.map((c) => c.id) })}>
+            <span class="n">{radius.length}</span>
+            <span class="l">{radiusLabel}</span>
+          </button>
+        </div>
+      </div>
+
+      <label class="toggle card pad mt8" style={{ padding: '6px 16px' }}>
+        <span class="small">Ta med tidlige: frist {fmtQ(addQuarters(q, 1))}, maks {state.settings.earlyMaxMin} min fra en dag med ledig plass</span>
+        <input type="checkbox" checked={early} onChange={(e) => setEarly(e.currentTarget.checked)} />
+      </label>
+      <button class="btn primary block mt12" onClick={run}>Lag plan for uka/kvartalet</button>
+      <div class="muted tiny mt8">Ulåste dager oppdateres.</div>
+
+      <Section title={`Haster · ${haster.length}`}>
+        {haster.length ? (
+          <div class="list">
+            {haster.slice(0, 8).map((c) => {
+              const f = facilityOf(state, c);
+              return (
+                <Row
+                  title={f.customer}
+                  sub={`${f.address.place} · ${c.due.year ? fmtQuarter(c.due) : ''}`}
+                  onClick={() => nav.push({ kind: 'facility', id: f.id })}
+                />
+              );
+            })}
+            {haster.length > 8 && (
+              <button class="btn ghost block mt8" onClick={() => nav.push({ kind: 'list', title: 'Haster', subtitle: 'Forfalt eller frist innen to uker, uten kjøredag', ids: haster.map((c) => c.id) })}>Vis alle</button>
+            )}
+          </div>
+        ) : (
+          <div class="list"><div class="empty"><b>Ingenting haster</b>Forfalte og frister innen to uker uten dag vises her.</div></div>
+        )}
+      </Section>
     </div>
   );
 }
@@ -107,7 +145,7 @@ function WeekDay({ date }: { date: string }) {
       <div class="card pad mt12">
         <div style={{ fontWeight: 700, textTransform: 'capitalize' }}>{fmtDateWeekday(date)}</div>
         <div class="muted small">Ingen stopp denne dagen.</div>
-        <button class="btn primary block mt12" onClick={() => nav.sheet({ kind: 'today', date })}>Legg inn stopp</button>
+        <button class="btn ghost block mt12" onClick={() => nav.sheet({ kind: 'today', date })}>Legg til stopp</button>
       </div>
     );
   }
@@ -124,6 +162,7 @@ function DayCard({ day }: { day: PlanDay }) {
   const canFill = free > 0 && dayHasRoom(state, day);
   const short = day.stops.some((id) => findControl(state, id)?.log.some((l) => l.text.includes('kort varsel')));
   const [opt, setOpt] = useState<{ before: number; after: number } | null>(null);
+  const [tools, setTools] = useState(false);
   const drag = (id: string, dir: -1 | 1) => update((s) => { moveStopBy(s, id, dir); });
   return (
     <div class={`card daycard mt12${tl.overtime ? ' over' : ''}`}>
@@ -148,7 +187,6 @@ function DayCard({ day }: { day: PlanDay }) {
         {day.stops.map((id, i) => {
           const c = findControl(state, id)!;
           const f = facilityOf(state, c);
-          const phone = primaryPhone(f);
           const slot = tl.slots[id];
           const when = c.timeFrom ?? (slot ? minutesToClock(slot.start) : '');
           return (
@@ -157,7 +195,6 @@ function DayCard({ day }: { day: PlanDay }) {
               <button class="iconbtn" aria-label="Flytt ned" disabled={i === day.stops.length - 1 || day.locked} onClick={() => drag(id, 1)}><span class="turn down"><Icon.chevL /></span></button>
               <div class="when">{when}</div>
               <button class="nm" onClick={() => nav.push({ kind: 'facility', id: f.id })}>{f.customer}</button>
-              <a class="btn" href={phone ? `tel:${phone.replace(/\s/g, '')}` : undefined} style={phone ? {} : { opacity: 0.4, pointerEvents: 'none' }}>Ring</a>
               <button class="btn" onClick={() => nav.sheet({ kind: 'move', controlId: id })}>Flytt</button>
             </div>
           );
@@ -181,7 +218,8 @@ function DayCard({ day }: { day: PlanDay }) {
           </div>
         </>
       )}
-      <div class="tools">
+      <button class="btn ghost block" onClick={() => setTools((v) => !v)}>{tools ? 'Skjul verktøy' : 'Verktøy'}</button>
+      {tools && <div class="tools">
         <button class="btn" onClick={() => nav.push({ kind: 'route', dayId: day.id })}><Icon.nav />Rute</button>
         <button class="btn" onClick={() => { const p = optimizePreview(state, day.id); if (p) setOpt(p); }} disabled={day.stops.length < 2 || day.locked}>Optimaliser rekkefølge</button>
         <a class="btn" href={dayRouteUrl(state, day)} target="_blank" rel="noopener"><Icon.route />Hele ruten</a>
@@ -191,7 +229,7 @@ function DayCard({ day }: { day: PlanDay }) {
         {ov && (ov.overnight.controls > ov.dayTrips.controls || ov.dayTrips.driveMin - ov.overnight.driveMin >= 90) && (
           <button class="btn primary" onClick={() => { update((s) => applyOvernight(s, ov)); nav.toast('Overnattingstur lagt inn'); }}>Bruk overnatting</button>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

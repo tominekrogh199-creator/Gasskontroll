@@ -92,7 +92,7 @@ export function FacilityDetail({ id }: { id: string }) {
           <div class="btnrow">
             <button class="btn small" onClick={() => { update((s) => registerConfirmed(s, c.id)); nav.toast('Bekreftet'); }}>Bekreftet</button>
             <button class="btn small" onClick={() => nav.sheet({ kind: 'newtime', controlId: c.id })}>Ny tid</button>
-            <button class="btn small" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsettelse</button>
+            <button class="btn small" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsett</button>
             <button class="btn small" onClick={() => { update((s) => registerNoAnswer(s, c.id)); nav.toast('Purring laget og lagt i «Ring disse»'); }}>Ingen svar</button>
           </div>
         </div>

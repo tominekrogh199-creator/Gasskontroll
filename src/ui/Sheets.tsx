@@ -32,6 +32,7 @@ export function Sheets({ spec }: { spec: SheetSpec }) {
     case 'offday': return <OffDaySheet id={spec.controlId} dayId={spec.dayId} close={close} />;
     case 'today': return <TodaySheet date={spec.date} close={close} />;
     case 'utsett': return <PostponePick close={close} />;
+    case 'more': return <MoreSheet close={close} />;
   }
 }
 
@@ -101,8 +102,16 @@ function PostponeSheet({ id, close }: { id: string; close: () => void }) {
   if (!c) return null;
   const f = facilityOf(state, c);
   const after = postponeAfterDeadline(c, period);
+  const onDay = state.days.some((d) => d.stops.includes(id));
   return (
-    <Sheet title="Utsett kontroll" sub={`${f.customer} · frist ${fmtQuarter(c.due)}`} onClose={close}>
+    <Sheet title="Utsett" sub={`${f.customer} · frist ${fmtQuarter(c.due)}`} onClose={close}>
+      {onDay && (
+        <button class="btn block" onClick={() => {
+          const hole = update((s) => removeStop(s, id));
+          nav.sheet({ kind: 'offday', controlId: id, dayId: hole });
+        }}>Av i dag</button>
+      )}
+      {onDay && <div class="muted small mt12">Eller flytt fristen:</div>}
       <Field label="Årsak">
         <select class="sel" value={reason} onChange={(e) => setReason(e.currentTarget.value as PostponeReason)}>
           {REASONS.map((r) => <option>{r}</option>)}
@@ -226,7 +235,7 @@ function MoveSheet({ id, close, schedule }: { id: string; close: () => void; sch
             const hole = update((s) => removeStop(s, id));
             nav.sheet({ kind: 'offday', controlId: id, dayId: hole });
           }}>Ta av dagen</button>
-          <button class="btn ghost block" onClick={() => nav.sheet({ kind: 'postpone', controlId: id })}>Utsett til senere</button>
+          <button class="btn ghost block" onClick={() => nav.sheet({ kind: 'postpone', controlId: id })}>Utsett</button>
         </>
       )}
     </Sheet>
@@ -290,7 +299,7 @@ function OffDaySheet({ id, dayId, close }: { id: string; dayId: string | null; c
           );
         })}
       </div>
-      <button class="btn ghost block mt12" onClick={() => nav.sheet({ kind: 'postpone', controlId: id })}>Utsett til senere</button>
+      <button class="btn ghost block mt12" onClick={() => nav.sheet({ kind: 'postpone', controlId: id })}>Utsett</button>
     </Sheet>
   );
 }
@@ -321,6 +330,21 @@ function TodaySheet({ date, close }: { date: string; close: () => void }) {
   );
 }
 
+function MoreSheet({ close }: { close: () => void }) {
+  const nav = useNav();
+  return (
+    <Sheet title="Mer" sub="Kunder, opplasting og innstillinger" onClose={close}>
+      <div class="list">
+        <button class="row" onClick={() => nav.push({ kind: 'facilities' })}><div class="main"><div class="t">Kunder</div><div class="s">Søk, filter og anleggskort</div></div></button>
+        <button class="row" onClick={() => nav.push({ kind: 'import' })}><div class="main"><div class="t">Last opp</div><div class="s">PDF, CSV eller manuelt</div></div></button>
+        <button class="row" onClick={() => nav.push({ kind: 'settings' })}><div class="main"><div class="t">Innstillinger</div><div class="s">Radius, maler og testdato</div></div></button>
+        <button class="row" onClick={() => nav.push({ kind: 'inbox' })}><div class="main"><div class="t">Innboks</div><div class="s">Svar, ring og import-gjennomgang</div></div></button>
+        <button class="row" onClick={() => nav.sheet({ kind: 'adhoc' })}><div class="main"><div class="t">Ad hoc</div><div class="s">Oppdrag utenom planen</div></div></button>
+      </div>
+    </Sheet>
+  );
+}
+
 function PostponePick({ close }: { close: () => void }) {
   const state = useAppState();
   const nav = useNav();
@@ -333,7 +357,7 @@ function PostponePick({ close }: { close: () => void }) {
     .sort((a, b) => Number(!!b.c.plannedDate) - Number(!!a.c.plannedDate) || a.f.customer.localeCompare(b.f.customer, 'nb'))
     .slice(0, 8);
   return (
-    <Sheet title="Utsettelse" sub="Når kunden ber om å utsette" onClose={close}>
+    <Sheet title="Utsett" sub="Når kunden ber om å utsette" onClose={close}>
       <Field label="Hvem utsetter kontrollen?">
         <input class="inp" value={q} onInput={(e) => setQ(e.currentTarget.value)} placeholder="Kundenavn eller sted" />
       </Field>

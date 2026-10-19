@@ -1,7 +1,7 @@
 import { update, useAppState } from '../store';
 import { Icon, NavBar, Seg, useNav } from './components';
 import { facilityOf, findControl, primaryPhone, todayOf } from '../domain/controls';
-import { appleStopUrl, dayRouteUrl, dayTimeline, googleStopUrl, refreshDay, removeStop } from '../domain/planner';
+import { appleStopUrl, dayRouteUrl, dayTimeline, googleStopUrl, refreshDay } from '../domain/planner';
 import { fmtDateWeekday, fmtDuration, minutesToClock } from '../domain/dates';
 import { STATUS_LABEL, type PlanDay } from '../domain/types';
 
@@ -121,11 +121,7 @@ function StopCard({ day, id, index, first }: { day: PlanDay; id: string; index: 
       {!done && (
         <>
           <button class="btn primary block mt12" onClick={() => nav.sheet({ kind: 'complete', controlId: c.id })}><Icon.done />Utført</button>
-          <button class="btn block mt8" onClick={() => {
-            const hole = update((s) => removeStop(s, id));
-            nav.sheet({ kind: 'offday', controlId: id, dayId: hole });
-          }}>Av i dag</button>
-          <button class="btn ghost block" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}>Utsett til senere</button>
+          <button class="btn block mt8" onClick={() => nav.sheet({ kind: 'postpone', controlId: c.id })}><Icon.pause />Utsett</button>
         </>
       )}
       <button class="btn small ghost mt8" onClick={() => nav.push({ kind: 'facility', id: f.id })}>Anleggskort</button>

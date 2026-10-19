@@ -100,10 +100,7 @@ export function Facilities() {
 
   return (
     <div class="screen">
-      <div class="topbar">
-        <h1>Anlegg</h1>
-        <button class="iconbtn labeled" onClick={() => nav.push({ kind: 'import' })} aria-label="Importer eller registrer"><Icon.plus />Importer</button>
-      </div>
+      <NavBar title="Kunder" />
       <div class="search">
         <Icon.search />
         <input class="inp" type="search" placeholder="Søk kunde, adresse, Objekt ID" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
@@ -163,7 +160,7 @@ export function Facilities() {
         {sorted.length} av {controls.length} anlegg · {fmtQ(q0)} nå, {fmtQ(addQuarters(q0, 1))} neste
       </div>
       <div class="list">
-        {sorted.length ? sorted.map((c) => <ControlRow c={c} />) : <Empty title="Ingen treff">Endre søket eller filtrene, eller legg til anlegg med +.</Empty>}
+        {sorted.length ? sorted.map((c) => <ControlRow c={c} />) : <Empty title="Ingen treff">Endre søket eller filtrene. Nye kunder kommer fra Last opp.</Empty>}
       </div>
     </div>
   );

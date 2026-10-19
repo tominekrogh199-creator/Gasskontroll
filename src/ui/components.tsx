@@ -48,7 +48,10 @@ export type Screen =
   | { kind: 'import' }
   | { kind: 'review'; id?: string }
   | { kind: 'draft'; noticeId: string }
-  | { kind: 'daysheet'; dayId: string };
+  | { kind: 'daysheet'; dayId: string }
+  | { kind: 'facilities' }
+  | { kind: 'inbox' }
+  | { kind: 'approve' };
 
 export interface Nav {
   push: (s: Screen) => void;
@@ -57,7 +60,7 @@ export interface Nav {
   sheet: (s: SheetSpec | null) => void;
   toast: (msg: string) => void;
 }
-export type TabKey = 'hjem' | 'kart' | 'plan' | 'anlegg' | 'innboks';
+export type TabKey = 'idag' | 'uke' | 'kart';
 export type SheetSpec =
   | { kind: 'pin'; facilityId: string }
   | { kind: 'postpone'; controlId: string }
@@ -69,10 +72,19 @@ export type SheetSpec =
   | { kind: 'schedule'; controlId: string }
   | { kind: 'offday'; controlId: string; dayId: string | null }
   | { kind: 'today'; date: string }
-  | { kind: 'utsett' };
+  | { kind: 'utsett' }
+  | { kind: 'more' };
 
 export const NavCtx = createContext<Nav>(null as unknown as Nav);
 export const useNav = () => useContext(NavCtx);
+
+/** Én dør til kunder, opplasting, innstillinger, innboks og ad hoc. */
+export function MerButton() {
+  const nav = useNav();
+  return (
+    <button class="iconbtn labeled" onClick={() => nav.sheet({ kind: 'more' })} aria-label="Mer">Mer</button>
+  );
+}
 
 // ---------- Byggeklosser ----------
 
