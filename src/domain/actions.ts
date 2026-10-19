@@ -29,6 +29,7 @@ export function registerNewTime(state: AppState, controlId: string, date: string
     const start = clockToMinutes(timeFrom);
     c.timeFrom = minutesToClock(start);
     c.timeTo = minutesToClock(start + durationOf(f, state.settings));
+    c.timePinned = true;
   }
   c.callReason = null;
   for (const n of c.notices) if ((n.kind === 'paminnelse' || n.kind === 'purring') && n.status !== 'sendt') n.status = 'stoppet';

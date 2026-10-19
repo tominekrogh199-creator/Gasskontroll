@@ -137,6 +137,8 @@ export interface Control {
   callReason: string | null; // satt når kontrollen står i «Ring disse»
   log: LogEntry[];
   adhocLabel?: string;
+  /** Kunden har bedt om et klokkeslett. Ruten flytter ikke dette av seg selv. */
+  timePinned?: boolean;
 }
 
 export interface PlanDay {
@@ -145,6 +147,10 @@ export interface PlanDay {
   stops: string[]; // kontroll-id-er i kjørerekkefølge
   locked: boolean;
   overnight: 'ut' | 'hjem' | null; // del av en tur med overnatting
+  /** Hvor kjøringen starter. Tom = basen. */
+  startMode?: 'base' | 'gps' | 'siste';
+  startLat?: number | null;
+  startLng?: number | null;
 }
 
 export interface Templates { forvarsel: string; forvarselKvartal: string; paminnelse: string; purring: string }

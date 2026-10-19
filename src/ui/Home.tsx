@@ -16,8 +16,10 @@ export function Home() {
   const next = h.nextDay;
   const tl = next ? dayTimeline(state, next) : null;
   const rel = next ? (next.date === today ? 'I dag' : next.date === addDays(today, 1) ? 'I morgen' : 'Neste kjøredag') : '';
-  const inQ = h.dueInQuarter.filter((c) => !isOverdue(c.due, today));
+  const inQ = h.dueThisQuarter;
   const queue = h.dueInQuarter.filter((c) => c.status === 'ikke_planlagt').slice(0, 5);
+  const todayDay = h.todayDay;
+  const todayTl = todayDay ? dayTimeline(state, todayDay) : null;
   const missingIds = state.facilities.flatMap((f) => {
     if (f.mergedInto) return [];
     const c = currentControl(state, f.id);
@@ -45,32 +47,40 @@ export function Home() {
       )}
 
       <div class="card hero mt12">
-        {next && tl ? (
+        <div class="eyebrow">I dag</div>
+        {todayDay && todayTl ? (
           <>
-            <div class="eyebrow">{rel}</div>
-            <div class="date" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(next.date)}</div>
+            <div class="date" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(today)}</div>
             <div class="meta">
-              {next.stops.length} {next.stops.length === 1 ? 'stopp' : 'stopp'} · {dayArea(state, next)} · hjemme ca. {minutesToClock(tl.endMin)}
+              {todayDay.stops.length} stopp · {dayArea(state, todayDay)} · hjemme ca. {minutesToClock(todayTl.endMin)}
             </div>
             <div class="actions">
-              <button class="btn primary" style={{ flex: 1 }} onClick={() => nav.push({ kind: 'route', dayId: next.id })}>
+              <button class="btn primary" style={{ flex: 1 }} onClick={() => nav.push({ kind: 'route', dayId: todayDay.id })}>
                 <Icon.nav /> Start ruten
               </button>
-              <button class="btn" onClick={() => nav.tab('kart', { dayId: next.id })}>Kart</button>
+              <button class="btn" onClick={() => nav.tab('kart', { dayId: todayDay.id })}>Kart</button>
             </div>
           </>
         ) : (
           <>
-            <div class="eyebrow">Neste kjøredag</div>
-            <div class="date">Ingen kjøredager planlagt</div>
-            <div class="meta">Lag en kvartalsplan, så får du ferdige kjøredager og forvarsler.</div>
-            <div class="actions"><button class="btn primary" onClick={() => nav.tab('plan')}>Lag plan</button></div>
+            <div class="date" style={{ textTransform: 'capitalize' }}>{fmtDateWeekday(today)}</div>
+            <div class="meta">Ingen stopp ennå. Legg inn det du skal kjøre i dag.</div>
+            <div class="actions">
+              <button class="btn primary" style={{ flex: 1 }} onClick={() => nav.sheet({ kind: 'today', date: today })}>Legg på i dag</button>
+              <button class="btn" onClick={() => nav.tab('plan')}>Uka</button>
+            </div>
           </>
+        )}
+        {next && tl && (
+          <button class="banner soft" style={{ marginTop: 12 }} onClick={() => nav.push({ kind: 'route', dayId: next.id })}>
+            <span style={{ flex: 1 }}>{rel}: {fmtDateWeekday(next.date)} · {next.stops.length} stopp · hjemme ca. {minutesToClock(tl.endMin)}</span>
+            <Icon.chevR />
+          </button>
         )}
       </div>
 
       <div class="stats">
-        <button class="stat" onClick={() => nav.push({ kind: 'list', title: `Forfaller i ${fmtQ(h.quarter)}`, subtitle: 'Forfalte står øverst', ids: h.dueInQuarter.map((c) => c.id) })}>
+        <button class="stat" onClick={() => nav.push({ kind: 'list', title: `Forfaller i ${fmtQ(h.quarter)}`, subtitle: 'Frist i dette kvartalet', ids: inQ.map((c) => c.id) })}>
           <span class="n">{inQ.length}</span>
           <span class="l">Forfaller i {fmtQ(h.quarter)}</span>
         </button>
@@ -87,6 +97,11 @@ export function Home() {
           <span class="l">Utsatt</span>
         </button>
       </div>
+
+      <button class={`banner soft${h.atRisk.length ? '' : ''}`} onClick={() => nav.push({ kind: 'list', title: 'Frist i fare', subtitle: 'Forfalt eller frist innen to uker, og ikke satt på en dag', ids: h.atRisk.map((c) => c.id) })}>
+        <span style={{ flex: 1 }}>Frist i fare · {h.atRisk.length}</span>
+        <Icon.chevR />
+      </button>
 
       <button class="banner soft" onClick={() => nav.push({ kind: 'list', title: 'Mangler info', subtitle: 'E-post, telefon eller koordinater mangler', ids: missingIds })}>
         <span style={{ flex: 1 }}>Mangler info · {missingIds.length}</span>

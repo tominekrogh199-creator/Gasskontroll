@@ -1,9 +1,9 @@
 // Akseptansetester mot domenelogikken (samme kode som appen bruker).
 import { describe, it, expect } from 'vitest';
 import { buildDemo, defaultSettings } from '../src/data/demo';
-import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf, refreshDay, dayHasRoom, earliestPlanDate, earliestOverdueDate, durationOf } from '../src/domain/planner';
-import { addDays, addQuarters, firstWorkdayOfQuarter, isOverdue, quarterOf, fmtDateWeekday, minutesToClock, clockToMinutes, compareQuarter } from '../src/domain/dates';
-import { homeStats, sortedDays } from '../src/domain/selectors';
+import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf, refreshDay, dayHasRoom, earliestPlanDate, earliestOverdueDate, durationOf, moveStopBy, setDayOrder, optimizePreview, applyOptimizedOrder, removeStop } from '../src/domain/planner';
+import { addDays, addQuarters, firstWorkdayOfQuarter, isOverdue, quarterOf, fmtDateWeekday, minutesToClock, clockToMinutes, compareQuarter, suggestedNextDue, quarterEnd } from '../src/domain/dates';
+import { atRiskControls, homeStats, sortedDays } from '../src/domain/selectors';
 import { complete, currentControl, facilityOf, pinColor, postpone, recipient, todayOf } from '../src/domain/controls';
 import { callList, markSent, reminderSendDate, runAutomations, draftsToApprove } from '../src/domain/notices';
 import { parseReport } from '../src/domain/reportParser';
@@ -290,5 +290,85 @@ describe('Ny rapport lukker kontrollen', () => {
     expect(cur.status).toBe('ikke_planlagt');
     expect(cur.due).toEqual({ q: 4, year: 2030 });
     expect(r.message).toContain('utført');
+  });
+});
+
+describe('Rekkefølge', () => {
+  it('bytter stopp og regner hjemmetid og klokkeslett på nytt', () => {
+    const st = demoAt('2026-10-19');
+    const day = st.days.find((d) => d.stops.length >= 2)!;
+    const before = [...day.stops];
+    const moved = st.controls.find((c) => c.id === before[0])!;
+    const oldFrom = moved.timeFrom;
+    expect(moveStopBy(st, before[0], 1)).toBe(true);
+    expect(day.stops[0]).toBe(before[1]);
+    expect(day.stops[1]).toBe(before[0]);
+    const tl = dayTimeline(st, day);
+    expect(moved.timeFrom).not.toBe(oldFrom);
+    expect(moved.timeFrom).toBe(minutesToClock(tl.slots[moved.id].start));
+    expect(moved.timeTo).toBe(minutesToClock(tl.slots[moved.id].end));
+    for (const id of day.stops) {
+      const c = st.controls.find((x) => x.id === id)!;
+      expect(c.timeFrom).toBe(minutesToClock(tl.slots[id].start));
+    }
+  });
+});
+
+describe('Av i dag', () => {
+  it('tar stoppet ut av ruten og flytter hjemmetiden', () => {
+    const st = demoAt('2026-10-19');
+    const day = st.days.find((d) => d.id === 'd_demo1')!;
+    const before = dayTimeline(st, day).endMin;
+    const id = day.stops[0];
+    expect(removeStop(st, id)).toBe(day.id);
+    expect(day.stops.includes(id)).toBe(false);
+    expect(st.controls.find((c) => c.id === id)!.status).toBe('ikke_planlagt');
+    expect(dayTimeline(st, day).endMin).toBeLessThan(before);
+  });
+});
+
+describe('Utført-forslag', () => {
+  it('vanlig intervall er samme kvartal om fire år', () => {
+    expect(suggestedNextDue('2026-10-19')).toEqual({ q: 4, year: 2030 });
+  });
+});
+
+describe('Optimaliser', () => {
+  it('viser hjemmetid før og etter, og bruker rekkefølgen når den bekreftes', () => {
+    const st = demoAt('2026-10-19');
+    const day = st.days.find((d) => d.stops.length >= 2)!;
+    setDayOrder(st, day.id, [...day.stops].reverse());
+    const preview = optimizePreview(st, day.id);
+    expect(preview).not.toBeNull();
+    expect(preview!.after).toBeLessThanOrEqual(preview!.before);
+    applyOptimizedOrder(st, day.id);
+    expect(day.stops).toEqual(preview!.order);
+    expect(dayTimeline(st, day).endMin).toBe(preview!.after);
+  });
+});
+
+describe('Frist i fare', () => {
+  it('tallet er listen: frist innen to uker eller forfalt, og ikke på en dag', () => {
+    const today = '2026-10-19';
+    const st = demoAt(today);
+    const list = atRiskControls(st);
+    const h = homeStats(st);
+    const horizon = addDays(today, 14);
+    const onDay = new Set(st.days.flatMap((d) => d.stops));
+    expect(h.atRisk.map((c) => c.id)).toEqual(list.map((c) => c.id));
+    expect(h.dueThisQuarter.every((c) => !isOverdue(c.due, today))).toBe(true);
+    expect(h.dueInQuarter.length).toBe(h.overdue.length + h.dueThisQuarter.length);
+    for (const c of list) {
+      expect(onDay.has(c.id)).toBe(false);
+      expect(isOverdue(c.due, today) || quarterEnd(c.due) <= horizon).toBe(true);
+    }
+    const tuesday = st.days.find((d) => d.id === 'd_demo1')!;
+    for (const id of tuesday.stops) expect(list.some((c) => c.id === id)).toBe(false);
+    const far = st.controls.find((c) => !onDay.has(c.id) && c.status !== 'utfort' && !isOverdue(c.due, today) && quarterEnd(c.due) > horizon);
+    expect(far).toBeTruthy();
+    expect(list.some((c) => c.id === far!.id)).toBe(false);
+    const late = st.controls.find((c) => !onDay.has(c.id) && c.status !== 'utfort' && isOverdue(c.due, today));
+    expect(late).toBeTruthy();
+    expect(list.some((c) => c.id === late!.id)).toBe(true);
   });
 });

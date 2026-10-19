@@ -47,7 +47,8 @@ export type Screen =
   | { kind: 'settings' }
   | { kind: 'import' }
   | { kind: 'review'; id?: string }
-  | { kind: 'draft'; noticeId: string };
+  | { kind: 'draft'; noticeId: string }
+  | { kind: 'daysheet'; dayId: string };
 
 export interface Nav {
   push: (s: Screen) => void;
@@ -65,7 +66,9 @@ export type SheetSpec =
   | { kind: 'move'; controlId: string }
   | { kind: 'fill'; dayId: string; reason?: string }
   | { kind: 'adhoc'; date?: string }
-  | { kind: 'schedule'; controlId: string };
+  | { kind: 'schedule'; controlId: string }
+  | { kind: 'offday'; controlId: string; dayId: string | null }
+  | { kind: 'today'; date: string };
 
 export const NavCtx = createContext<Nav>(null as unknown as Nav);
 export const useNav = () => useContext(NavCtx);

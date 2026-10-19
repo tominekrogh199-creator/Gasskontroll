@@ -1,6 +1,6 @@
 // Avledede lister for skjermene. Forfalte og snart forfalte står alltid først.
 import type { AppState, Control, PlanDay, Quarter } from './types';
-import { compareQuarter, isOverdue, quarterOf, sameQuarter } from './dates';
+import { addDays, compareQuarter, isOverdue, quarterEnd, quarterOf, sameQuarter } from './dates';
 import { facilityOf, todayOf } from './controls';
 import { draftsToApprove, lateDrafts } from './notices';
 import { driveFromBase } from './planner';
@@ -25,11 +25,26 @@ export function openControls(state: AppState): Control[] {
 export interface HomeStats {
   quarter: Quarter;
   dueInQuarter: Control[]; // frist i kvartalet + forfalte, forfalte øverst
+  dueThisQuarter: Control[]; // samme liste som tallet «Forfaller i kvartalet»
   overdue: Control[];
+  atRisk: Control[]; // frist innen to uker eller forfalt, og ikke satt på en dag
   pending: number;
   late: number;
   postponed: Control[];
   nextDay: PlanDay | null;
+  todayDay: PlanDay | null;
+}
+
+/** Frist innen to uker, eller allerede forfalt, og ikke lagt på en kjøredag. */
+export function atRiskControls(state: AppState): Control[] {
+  const today = todayOf(state.settings);
+  const horizon = addDays(today, 14);
+  const onDay = new Set(state.days.flatMap((d) => d.stops));
+  return urgencySort(state, state.controls.filter((c) => {
+    if (c.status === 'utfort' || onDay.has(c.id)) return false;
+    if (facilityOf(state, c).mergedInto) return false;
+    return isOverdue(c.due, today) || quarterEnd(c.due) <= horizon;
+  }));
 }
 
 export function homeStats(state: AppState): HomeStats {
@@ -37,16 +52,20 @@ export function homeStats(state: AppState): HomeStats {
   const q = quarterOf(today);
   const open = openControls(state).filter((c) => !c.adhocLabel);
   const overdue = urgencySort(state, open.filter((c) => isOverdue(c.due, today)));
-  const inQ = open.filter((c) => sameQuarter(c.due, q));
-  const nextDay = [...state.days].filter((d) => d.date >= today && d.stops.length).sort((a, b) => a.date.localeCompare(b.date))[0] ?? null;
+  const inQ = open.filter((c) => sameQuarter(c.due, q) && !isOverdue(c.due, today));
+  const nextDay = [...state.days].filter((d) => d.date > today && d.stops.length).sort((a, b) => a.date.localeCompare(b.date))[0] ?? null;
+  const todayDay = state.days.find((d) => d.date === today && d.stops.length) ?? null;
   return {
     quarter: q,
     dueInQuarter: urgencySort(state, [...overdue, ...inQ]),
+    dueThisQuarter: urgencySort(state, inQ),
     overdue,
+    atRisk: atRiskControls(state),
     pending: draftsToApprove(state).length,
     late: lateDrafts(state).length,
     postponed: urgencySort(state, open.filter((c) => c.status === 'utsatt')),
     nextDay,
+    todayDay,
   };
 }
 

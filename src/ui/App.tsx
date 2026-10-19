@@ -11,6 +11,7 @@ import { Review } from './Review';
 import { ImportScreen } from './ImportScreen';
 import { SettingsScreen } from './Settings';
 import { RouteScreen } from './RouteScreen';
+import { DaySheet } from './DaySheet';
 import { Sheets } from './Sheets';
 import { draftsToApprove, lateDrafts, callList } from '../domain/notices';
 import { todayOf } from '../domain/controls';
@@ -74,6 +75,7 @@ export function App() {
             {top.kind === 'list' && <ControlList title={top.title} ids={top.ids} subtitle={top.subtitle} />}
             {top.kind === 'facility' && <FacilityDetail id={top.id} />}
             {top.kind === 'route' && <RouteScreen dayId={top.dayId} />}
+            {top.kind === 'daysheet' && <DaySheet dayId={top.dayId} />}
             {top.kind === 'settings' && <SettingsScreen />}
             {top.kind === 'import' && <ImportScreen />}
             {top.kind === 'review' && <Review startId={top.id} />}

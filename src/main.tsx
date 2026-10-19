@@ -10,3 +10,11 @@ try {
 }
 
 render(<App />, document.getElementById('app')!);
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(new URL('../sw.js', import.meta.url), { updateViaCache: 'none' }).catch(() => {
+      /* nettleseren uten worker, appen virker fortsatt */
+    });
+  });
+}
