@@ -3,7 +3,7 @@
 import type { AppState, Control, Facility, PlanDay, Quarter, Settings } from './types';
 import { getDriveTime, type LatLng } from '../adapters/driveTime';
 import {
-  addDays, clockToMinutes, compareQuarter, isOverdue, isWorkday, minutesToClock, nextWorkdayOnOrAfter,
+  addDays, addWorkdays, clockToMinutes, compareQuarter, isOverdue, isWorkday, minutesToClock, nextWorkdayOnOrAfter,
   quarterEnd, quarterStart, sameQuarter, workdaysInRange, addQuarters, fmtDate, fmtQuarter,
 } from './dates';
 import { areaFor } from './geo';
@@ -193,9 +193,8 @@ export function refreshDay(state: AppState, day: PlanDay, reorder = false): void
     c.plannedDate = day.date;
     const slot = tl.slots[id];
     if (slot && (c.status === 'planlagt' || !c.timeFrom)) {
-      const from = Math.floor(slot.start / 30) * 30;
-      c.timeFrom = minutesToClock(from);
-      c.timeTo = minutesToClock(from + 120);
+      c.timeFrom = minutesToClock(slot.start);
+      c.timeTo = minutesToClock(slot.end);
     }
   }
 }
@@ -222,6 +221,7 @@ export function candidatesFor(state: AppState, q: Quarter, opts: { includePlanne
     if (compareQuarter(c.due, q) > 0) continue;
     if (c.status === 'utsatt' && !postponedEligible(c, q, today)) continue;
     const f = facilityOf(state, c);
+    if (f.mergedInto) continue;
     if (!f.coords) { noCoords.push(c); continue; }
     const drive = getDriveTime(basePoint(s), f.coords);
     const cand: Candidate = { control: c, facility: f, overdue: isOverdue(c.due, planningRef) || compareQuarter(c.due, q) < 0, drive, early: false };
@@ -285,6 +285,25 @@ export function earliestPlanDate(state: AppState): string {
   return nextWorkdayOnOrAfter(addDays(today, state.settings.preNoticeDays + 1), state.settings.blockedDays);
 }
 
+/** Første virkedag et allerede forfalt anlegg kan tas, med kortere varsel enn de vanlige tre ukene. */
+export function earliestOverdueDate(state: AppState): string {
+  const today = todayOf(state.settings);
+  return addWorkdays(today, 1, state.settings.blockedDays);
+}
+
+/** Besøket ligger innenfor den vanlige forvarselfristen, så varselet må sendes tidligere enn normalt. */
+export function isShortNotice(state: AppState, date: string): boolean {
+  return date < earliestPlanDate(state);
+}
+
+/** Arbeidsdagen har minst én kontrolltid igjen før stengetid. Et fast antall ledige plasser er ikke nok. */
+export function dayHasRoom(state: AppState, day: PlanDay): boolean {
+  if (day.overnight || !day.stops.length) return false;
+  const tl = dayTimeline(state, day);
+  if (tl.overtime) return false;
+  return clockToMinutes(state.settings.dayEnd) - tl.endMin >= state.settings.controlMin;
+}
+
 export function availableDates(state: AppState, q: Quarter, exclude: Set<string>): string[] {
   const s = state.settings;
   const from = [quarterStart(q), earliestPlanDate(state)].sort()[1];
@@ -311,6 +330,19 @@ export function assignDates(groups: Candidate[][], dates: string[]): { date: str
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/** Legger hver gruppe på neste ledige dag, i rekkefølge. Brukes for forfalte, som ikke skal vente på forvarselsfristen. */
+function assignPacked(groups: Candidate[][], dates: string[]): { date: string; group: Candidate[] }[] {
+  const free = [...dates].sort();
+  const out: { date: string; group: Candidate[] }[] = [];
+  for (const g of groups) {
+    const i = free.findIndex((d) => !g.some((c) => blockedFor(c.facility, d)));
+    if (i < 0) continue;
+    const [date] = free.splice(i, 1);
+    out.push({ date, group: g });
+  }
+  return out;
+}
+
 // ---------- Lag plan ----------
 
 export interface PlanResult {
@@ -318,6 +350,8 @@ export interface PlanResult {
   created: number;
   planned: number;
   early: number;
+  /** Kjøredager før den vanlige forvarselfristen, fordi anlegget allerede er forfalt. */
+  shortNotice: number;
   unplaced: Control[];
   outOfRange: Candidate[];
   noCoords: Control[];
@@ -355,8 +389,16 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
   const { list, outOfRange, noCoords } = candidatesFor(state, q);
   const groups = buildDayGroups(list, s);
   const used = new Set(state.days.map((d) => d.date));
+  const noticeFrom = earliestPlanDate(state);
+  const overdueFrom = [quarterStart(q), earliestOverdueDate(state)].sort()[1];
+  const earlyDates = workdaysInRange(overdueFrom, quarterEnd(q), s.blockedDays).filter((d) => !used.has(d) && d < noticeFrom);
+  const overdueGroups = groups.filter((g) => g.some((c) => c.overdue));
+  const laterGroups = groups.filter((g) => !g.some((c) => c.overdue));
+  const earlyAssigned = assignPacked(overdueGroups, earlyDates);
+  for (const a of earlyAssigned) used.add(a.date);
+  const missed = overdueGroups.filter((g) => !earlyAssigned.some((a) => a.group === g));
   const dates = availableDates(state, q, used);
-  const assigned = assignDates(groups, dates);
+  const assigned = [...earlyAssigned, ...assignDates([...missed, ...laterGroups], dates)];
   const placed = new Set(assigned.flatMap((a) => a.group.map((c) => c.control.id)));
   let planned = 0;
   const newDays: PlanDay[] = [];
@@ -366,7 +408,8 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
     newDays.push(day);
     for (const cand of a.group) {
       const c = cand.control;
-      const why = c.status === 'utsatt' ? 'utsettelse fulgt opp' : undefined;
+      const short = a.date < noticeFrom;
+      const why = short ? 'forfalt, kort varsel' : c.status === 'utsatt' ? 'utsettelse fulgt opp' : undefined;
       setStatus(state, c, 'planlagt', why);
       c.callReason = null;
       planned++;
@@ -378,7 +421,7 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
   if (opts.early) {
     const nextQ = addQuarters(q, 1);
     const plannedIds = new Set(state.days.flatMap((d) => d.stops));
-    const pool = state.controls.filter((c) => c.status === 'ikke_planlagt' && sameQuarter(c.due, nextQ) && !plannedIds.has(c.id) && facilityOf(state, c).coords);
+    const pool = state.controls.filter((c) => c.status === 'ikke_planlagt' && !facilityOf(state, c).mergedInto && sameQuarter(c.due, nextQ) && !plannedIds.has(c.id) && facilityOf(state, c).coords);
     for (const day of newDays) {
       for (const c of [...pool]) {
         if (day.stops.length >= s.maxPerDay) break;
@@ -397,7 +440,8 @@ export function makePlan(state: AppState, q: Quarter, opts: { early?: boolean } 
     }
   }
   const unplaced = list.filter((c) => !placed.has(c.control.id)).map((c) => c.control);
-  return { quarter: q, created: assigned.length, planned, early, unplaced, outOfRange, noCoords };
+  const shortNotice = assigned.filter((a) => a.date < noticeFrom).length;
+  return { quarter: q, created: assigned.length, planned, early, shortNotice, unplaced, outOfRange, noCoords };
 }
 
 // ---------- Manuelle endringer ----------

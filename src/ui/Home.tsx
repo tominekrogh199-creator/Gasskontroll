@@ -1,7 +1,7 @@
 import { useAppState } from '../store';
 import { Icon, Row, Section, Dot, useNav, Empty } from './components';
 import { homeStats } from '../domain/selectors';
-import { facilityOf, nextStep, todayOf } from '../domain/controls';
+import { currentControl, facilityOf, missingInfo, nextStep, todayOf } from '../domain/controls';
 import { addDays, fmtDateWeekday, fmtQ, fmtQuarter, minutesToClock, isOverdue } from '../domain/dates';
 import { dayArea, dayTimeline } from '../domain/planner';
 import { callList, lateDrafts } from '../domain/notices';
@@ -18,12 +18,18 @@ export function Home() {
   const rel = next ? (next.date === today ? 'I dag' : next.date === addDays(today, 1) ? 'I morgen' : 'Neste kjøredag') : '';
   const inQ = h.dueInQuarter.filter((c) => !isOverdue(c.due, today));
   const queue = h.dueInQuarter.filter((c) => c.status === 'ikke_planlagt').slice(0, 5);
+  const missingIds = state.facilities.flatMap((f) => {
+    if (f.mergedInto) return [];
+    const c = currentControl(state, f.id);
+    if (!c || c.status === 'utfort' || !missingInfo(f).length) return [];
+    return [c.id];
+  });
 
   return (
     <div class="screen">
       <div class="topbar">
         <h1>Kontrollplan</h1>
-        <button class="iconbtn" onClick={() => nav.push({ kind: 'settings' })} aria-label="Innstillinger"><Icon.gear /></button>
+        <button class="iconbtn labeled" onClick={() => nav.push({ kind: 'settings' })} aria-label="Innstillinger"><Icon.gear />Innstillinger</button>
       </div>
       <div class="subtitle">
         {fmtDateWeekday(today)} · {fmtQuarter(h.quarter)}
@@ -81,6 +87,11 @@ export function Home() {
           <span class="l">Utsatt</span>
         </button>
       </div>
+
+      <button class="banner soft" onClick={() => nav.push({ kind: 'list', title: 'Mangler info', subtitle: 'E-post, telefon eller koordinater mangler', ids: missingIds })}>
+        <span style={{ flex: 1 }}>Mangler info · {missingIds.length}</span>
+        <Icon.chevR />
+      </button>
 
       {calls.length > 0 && (
         <button class="banner soft" onClick={() => nav.tab('innboks')}>

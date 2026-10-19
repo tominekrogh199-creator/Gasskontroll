@@ -89,6 +89,7 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
   const today = todayOf(state.settings);
   const q0 = quarterOf(today);
   const [mode, setMode] = useState<'kart' | 'radar'>('kart');
+  const [controlsOpen, setControlsOpen] = useState(false);
   const [qKey, setQKey] = useState(`${q0.year}-${q0.q}`);
   const [filter, setFilter] = useState<Filter>('alle');
   const [legend, setLegend] = useState(false);
@@ -102,27 +103,32 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
       <div class="mapctl top">
-        <div class="floating" style={{ flex: '1 1 150px' }}>
-          <select class="sel" value={qKey} onChange={(e) => setQKey(e.currentTarget.value)} aria-label="Kvartal og år">
-            {quarters.map((x) => <option value={`${x.year}-${x.q}`}>{fmtQ(x)}{sameQuarter(x, q0) ? ' · nå' : ''}</option>)}
-            <option value="alle">Alle åpne</option>
-          </select>
-        </div>
-        <div class="floating" style={{ flex: '1 1 150px' }}>
-          <select class="sel" value={filter} onChange={(e) => setFilter(e.currentTarget.value as Filter)} aria-label="Statusfilter">
-            {([['alle', 'Alle statuser'], ['red', 'Krever handling'], ['orange', 'Utsatt'], ['blue', 'Planlagt / varslet'], ['green', 'Bekreftet / utført'], ['grey', 'Mangler info']] as [Filter, string][]).map(([k, l]) => <option value={k}>{l}</option>)}
-          </select>
-        </div>
-        <div class="floating" style={{ flex: '1 1 150px' }}>
-          <select class="sel" value={dayId ?? ''} onChange={(e) => onDay(e.currentTarget.value || null)} aria-label="Vis rute for dag">
-            <option value="">Ingen rute</option>
-            {days.map((d) => <option value={d.id}>Rute {fmtShortWeekday(d.date)} · {d.stops.length} stopp</option>)}
-          </select>
-        </div>
-        <div class="floating" style={{ flex: '1 1 150px', padding: 2 }}>
+        <button class="btn floating" onClick={() => setControlsOpen((v) => !v)} aria-expanded={controlsOpen}>{controlsOpen ? 'Skjul valg' : 'Valg'}</button>
+        <div class="floating" style={{ flex: '1 1 160px', padding: 2 }}>
           <Seg value={mode} options={[['kart', 'Kart'], ['radar', 'Radar']]} onChange={setMode} />
         </div>
       </div>
+      {controlsOpen && (
+        <div class="mapctl filters">
+          <div class="floating" style={{ flex: '1 1 150px' }}>
+            <select class="sel" value={qKey} onChange={(e) => setQKey(e.currentTarget.value)} aria-label="Kvartal og år">
+              {quarters.map((x) => <option value={`${x.year}-${x.q}`}>{fmtQ(x)}{sameQuarter(x, q0) ? ' · nå' : ''}</option>)}
+              <option value="alle">Alle åpne</option>
+            </select>
+          </div>
+          <div class="floating" style={{ flex: '1 1 150px' }}>
+            <select class="sel" value={filter} onChange={(e) => setFilter(e.currentTarget.value as Filter)} aria-label="Statusfilter">
+              {([['alle', 'Alle statuser'], ['red', 'Krever handling'], ['orange', 'Utsatt'], ['blue', 'Planlagt / varslet'], ['green', 'Bekreftet / utført'], ['grey', 'Mangler info']] as [Filter, string][]).map(([k, l]) => <option value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div class="floating" style={{ flex: '1 1 150px' }}>
+            <select class="sel" value={dayId ?? ''} onChange={(e) => onDay(e.currentTarget.value || null)} aria-label="Vis rute for dag">
+              <option value="">Ingen rute</option>
+              {days.map((d) => <option value={d.id}>Rute {fmtShortWeekday(d.date)} · {d.stops.length} stopp</option>)}
+            </select>
+          </div>
+        </div>
+      )}
       {placingF && (
         <div class="floating" style={{ position: 'absolute', zIndex: 4, left: 12, right: 12, bottom: 'calc(150px + var(--safe-bottom))', padding: '10px 12px', display: 'flex', gap: 8, alignItems: 'center' }}>
           <span class="small" style={{ flex: 1 }}>Trykk på kartet der <b>{placingF.customer}</b> ligger.</span>
@@ -133,6 +139,7 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
         <VectorMap
           pins={pins}
           dayId={dayId}
+          chromeTop={controlsOpen ? 230 : 78}
           placing={!!placingF}
           onPin={(f) => nav.sheet({ kind: 'pin', facilityId: f.id })}
           onPlace={(lat, lng) => {
@@ -169,7 +176,7 @@ export function MapView({ dayId, onDay, placing, onPlaced }: { dayId: string | n
   );
 }
 
-function VectorMap({ pins, dayId, placing, onPin, onPlace }: { pins: PinItem[]; dayId: string | null; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void }) {
+function VectorMap({ pins, dayId, chromeTop, placing, onPin, onPlace }: { pins: PinItem[]; dayId: string | null; chromeTop: number; placing: boolean; onPin: (f: Facility) => void; onPlace: (lat: number, lng: number) => void }) {
   const state = useAppState();
   const ref = useRef<HTMLDivElement>(null);
   const base = proj(state.settings.baseLat, state.settings.baseLng);
@@ -188,7 +195,7 @@ function VectorMap({ pins, dayId, placing, onPin, onPlace }: { pins: PinItem[]; 
     const ps = pts.map((p) => proj(p.lat, p.lng));
     const minX = Math.min(...ps.map((p) => p.x)), maxX = Math.max(...ps.map((p) => p.x));
     const minY = Math.min(...ps.map((p) => p.y)), maxY = Math.max(...ps.map((p) => p.y));
-    const top = 130, bottom = 100;
+    const top = chromeTop, bottom = 100;
     const availH = Math.max(120, r.height - top - bottom);
     const scale = Math.max(((maxX - minX) * 1.2) / r.width, ((maxY - minY) * 1.2) / availH, 30 / r.width);
     setVb({ x: (minX + maxX) / 2 - (r.width * scale) / 2, y: (minY + maxY) / 2 - (top + availH / 2) * scale, w: r.width * scale, h: r.height * scale });
@@ -221,7 +228,7 @@ function VectorMap({ pins, dayId, placing, onPin, onPlace }: { pins: PinItem[]; 
     if (!day) return;
     const pts = day.stops.map((id) => stopOf(state, id)?.point).filter(Boolean) as { lat: number; lng: number }[];
     fitTo([...pts, basePoint(state.settings)]);
-  }, [dayId]);
+  }, [dayId, chromeTop]);
 
   const ratio = vb.w / cw;
   const zoom = (factor: number, cx?: number, cy?: number) =>
@@ -314,16 +321,16 @@ function VectorMap({ pins, dayId, placing, onPin, onPlace }: { pins: PinItem[]; 
           const p = proj(f.coords!.lat, f.coords!.lng);
           return (
             <g class="pin" onClick={(e) => { e.stopPropagation(); if (!placing && moved.current < 6) onPin(f); }}>
-              <circle cx={p.x} cy={p.y} r={14 * ratio} fill="transparent" />
-              {overdue && color !== 'red' && <circle cx={p.x} cy={p.y} r={9.5 * ratio} fill="none" stroke="var(--red)" stroke-width={2 * ratio} />}
-              <circle cx={p.x} cy={p.y} r={7 * ratio} fill={COLORS[color]} stroke="var(--surface)" stroke-width={1.8 * ratio} />
+              <circle cx={p.x} cy={p.y} r={24 * ratio} fill="transparent" />
+              {overdue && color !== 'red' && <circle cx={p.x} cy={p.y} r={21 * ratio} fill="none" stroke="var(--red)" stroke-width={2.4 * ratio} />}
+              <circle cx={p.x} cy={p.y} r={18 * ratio} fill={COLORS[color]} stroke="var(--surface)" stroke-width={2.2 * ratio} />
             </g>
           );
         })}
         {route && route.pts.map((p, i) => (
           <g>
-            <circle cx={p.x} cy={p.y} r={10 * ratio} fill="var(--graphite)" stroke="var(--surface)" stroke-width={2 * ratio} />
-            <text x={p.x} y={p.y + 4 * ratio} text-anchor="middle" style={{ fontSize: `${11 * ratio}px`, fontWeight: 700, fill: 'var(--bg)' }}>{i + 1}</text>
+            <circle cx={p.x} cy={p.y} r={16 * ratio} fill="var(--graphite)" stroke="var(--surface)" stroke-width={2 * ratio} />
+            <text x={p.x} y={p.y + 5 * ratio} text-anchor="middle" style={{ fontSize: `${14 * ratio}px`, fontWeight: 700, fill: 'var(--bg)' }}>{i + 1}</text>
           </g>
         ))}
         <g>
@@ -371,8 +378,8 @@ function Radar({ pins, onPin }: { pins: PinItem[]; onPin: (f: Facility) => void 
           const a = (bearing(b, f.coords!) * Math.PI) / 180;
           return (
             <g class="pin" onClick={() => onPin(f)}>
-              <circle cx={Math.sin(a) * m} cy={-Math.cos(a) * m} r={9} fill="transparent" />
-              <circle cx={Math.sin(a) * m} cy={-Math.cos(a) * m} r={4.5} fill={COLORS[color]} stroke="var(--surface)" stroke-width="1.2" />
+              <circle cx={Math.sin(a) * m} cy={-Math.cos(a) * m} r={22} fill="transparent" />
+              <circle cx={Math.sin(a) * m} cy={-Math.cos(a) * m} r={12} fill={COLORS[color]} stroke="var(--surface)" stroke-width="2" />
             </g>
           );
         })}

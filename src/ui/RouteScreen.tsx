@@ -5,6 +5,16 @@ import { appleStopUrl, dayRouteUrl, dayTimeline, googleStopUrl } from '../domain
 import { fmtDateWeekday, fmtDuration, minutesToClock } from '../domain/dates';
 import { STATUS_LABEL } from '../domain/types';
 
+function routeWindow(slot: { start: number; end: number } | undefined, from: string | null, to: string | null): string {
+  const agreed = from && to ? `${from}–${to}` : '';
+  const approx = slot ? `${minutesToClock(slot.start)}–${minutesToClock(slot.end)}` : '';
+  if (agreed && agreed === approx) return `kl. ${agreed}`;
+  if (agreed && approx) return `ca. ${approx} · avtalt ${agreed}`;
+  if (approx) return `ca. ${approx}`;
+  if (agreed) return `avtalt ${agreed}`;
+  return '';
+}
+
 /** «Start ruten»: stoppene i rekkefølge med notater og åpne avvik synlig før besøket. */
 export function RouteScreen({ dayId }: { dayId: string }) {
   const state = useAppState();
@@ -38,8 +48,9 @@ export function RouteScreen({ dayId }: { dayId: string }) {
                 <div style={{ fontWeight: 700, fontSize: 18 }}>{f.customer}</div>
                 <div class="muted">{f.address.street}, {f.address.postcode} {f.address.place}</div>
                 <div class="small mt8">
-                  {slot ? `ca. ${minutesToClock(slot.start)}–${minutesToClock(slot.end)}` : ''}
-                  {c.timeFrom ? ` · avtalt ${c.timeFrom}–${c.timeTo}` : ''} · <span class={done ? '' : 'muted'}>{STATUS_LABEL[c.status]}</span>
+                  {routeWindow(slot, c.timeFrom, c.timeTo)}
+                  {(slot || c.timeFrom) ? ' · ' : ''}
+                  <span class={done ? '' : 'muted'}>{STATUS_LABEL[c.status]}</span>
                   {c.adhocLabel ? ` · ${c.adhocLabel}` : ''}
                 </div>
               </div>

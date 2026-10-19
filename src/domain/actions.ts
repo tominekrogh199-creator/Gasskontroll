@@ -1,9 +1,9 @@
 // Kundesvar og ad hoc-oppdrag.
 import type { AppState, Facility } from './types';
-import { fmtDate, nowStamp, quarterOf, addQuarters } from './dates';
-import { findControl, logBoth, newControl, setStatus, todayOf, uid } from './controls';
+import { clockToMinutes, fmtDate, minutesToClock, nowStamp, quarterOf, addQuarters } from './dates';
+import { facilityOf, findControl, logBoth, newControl, setStatus, todayOf, uid } from './controls';
 import { chase, runAutomations } from './notices';
-import { ensureDay, moveStop, refreshDay } from './planner';
+import { durationOf, ensureDay, moveStop, refreshDay } from './planner';
 import { geocode } from '../adapters/geocode';
 
 export function registerConfirmed(state: AppState, controlId: string): void {
@@ -25,9 +25,10 @@ export function registerNewTime(state: AppState, controlId: string, date: string
   const day = ensureDay(state, date);
   moveStop(state, controlId, day.id);
   if (timeFrom) {
-    const [h, m] = timeFrom.split(':').map(Number);
-    c.timeFrom = timeFrom;
-    c.timeTo = `${String(h + 2).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    const f = facilityOf(state, c);
+    const start = clockToMinutes(timeFrom);
+    c.timeFrom = minutesToClock(start);
+    c.timeTo = minutesToClock(start + durationOf(f, state.settings));
   }
   c.callReason = null;
   for (const n of c.notices) if ((n.kind === 'paminnelse' || n.kind === 'purring') && n.status !== 'sendt') n.status = 'stoppet';

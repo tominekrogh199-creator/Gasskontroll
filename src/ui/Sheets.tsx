@@ -1,14 +1,22 @@
 import { useState } from 'preact/hooks';
-import { update, useAppState } from '../store';
+import { getState, update, useAppState } from '../store';
 import { FlagPills, Icon, Sheet, StatusPill, useNav, Field, type SheetSpec } from './components';
 import { ActionGrid } from './FacilityDetail';
 import type { PostponeReason, Quarter } from '../domain/types';
 import { complete, currentControl, facilityOf, findControl, postpone, postponeAfterDeadline, primaryContact, todayOf } from '../domain/controls';
 import { addDays, addQuarters, fmtDate, fmtDateWeekday, fmtDuration, fmtQ, fmtQuarter, isWorkday, nextWorkdayOnOrAfter, quarterOf } from '../domain/dates';
-import { addStopToDay, dayArea, dayTimeline, ensureDay, fillSuggestions, moveStop, refreshDay } from '../domain/planner';
+import { addStopToDay, dayArea, dayHasRoom, dayTimeline, ensureDay, fillSuggestions, moveStop, refreshDay } from '../domain/planner';
 import { addAdhoc, registerNewTime } from '../domain/actions';
 import { sortedDays } from '../domain/selectors';
 import { getDriveTime } from '../adapters/driveTime';
+import type { Nav } from './components';
+
+function offerFill(dayId: string | null, reason: string, nav: Nav, close: () => void) {
+  const fresh = getState();
+  const day = dayId ? fresh.days.find((d) => d.id === dayId) : undefined;
+  if (day && day.stops.length < fresh.settings.maxPerDay && dayHasRoom(fresh, day)) nav.sheet({ kind: 'fill', dayId: day.id, reason });
+  else close();
+}
 
 export function Sheets({ spec }: { spec: SheetSpec }) {
   const nav = useNav();
@@ -96,8 +104,7 @@ function PostponeSheet({ id, close }: { id: string; close: () => void }) {
       <button class="btn primary block mt12" onClick={() => {
         const { holeDayId } = update((s) => postpone(s, id, { reason, text, newPeriod: period, followUp, requestedBy: by }));
         nav.toast(`Utsatt til ${fmtQ(period)}. Oppfølging ${fmtDate(followUp)}.`);
-        if (holeDayId) nav.sheet({ kind: 'fill', dayId: holeDayId, reason: `${f.customer} er tatt ut av ruten.` });
-        else close();
+        offerFill(holeDayId, `${f.customer} er tatt ut av ruten.`, nav, close);
       }}>Utsett</button>
     </Sheet>
   );
@@ -260,7 +267,7 @@ function AdhocSheet({ close, date: initial }: { close: () => void; date?: string
       <button class="btn primary block mt12" disabled={!v.customer || !v.postcode || !isWorkday(v.date, state.settings.blockedDays)} onClick={() => {
         const { dayId } = update((s) => addAdhoc(s, v));
         nav.toast('Oppdraget er lagt inn');
-        nav.sheet({ kind: 'fill', dayId, reason: 'Oppdraget er lagt inn.' });
+        offerFill(dayId, 'Oppdraget er lagt inn.', nav, close);
       }}>Legg inn og vis forslag</button>
     </Sheet>
   );

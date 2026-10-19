@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import { update, useAppState } from '../store';
+import { mergeIntoOneVisit, sameAddressOf } from '../domain/merge';
 import { FlagPills, Icon, NavBar, Section, StatusPill, useNav } from './components';
 import type { Control, Facility } from '../domain/types';
 import { STATUS_LABEL } from '../domain/types';
@@ -39,6 +40,8 @@ export function FacilityDetail({ id }: { id: string }) {
   const requal = tankRequalYear(f.tank?.inServiceYear);
   const low = Object.entries(f.confidence).filter(([, v]) => v === 'lav').map(([k]) => (FIELD_LABEL as any)[k] ?? (k === 'coords' ? 'Koordinater' : k));
   const thisYear = Number(today.slice(0, 4));
+  const twin = sameAddressOf(state, f);
+  const host = f.mergedInto ? state.facilities.find((x) => x.id === f.mergedInto) : undefined;
 
   const saveNotes = () => update((s) => {
     const x = s.facilities.find((y) => y.id === f.id)!;
@@ -50,6 +53,13 @@ export function FacilityDetail({ id }: { id: string }) {
       <NavBar title={f.objectId} />
       <h2 style={{ fontSize: 26, margin: '4px 0 2px', letterSpacing: '-0.01em' }}>{f.customer || '(uten navn)'}</h2>
       <div class="muted">{f.address.street}, {f.address.postcode} {f.address.place}</div>
+      {host && <div class="note">Dekkes av besøket til {host.customer} (Objekt ID {host.objectId}).</div>}
+      {twin && (
+        <button class="btn block mt8" onClick={() => {
+          update((s) => mergeIntoOneVisit(s, f.id, twin.id));
+          nav.toast(`Slått sammen med ${twin.customer} til ett besøk`);
+        }}>Slå sammen med {twin.customer} · Objekt ID {twin.objectId}</button>
+      )}
       {c && (
         <div class="pills mt8">
           <StatusPill c={c} today={today} />

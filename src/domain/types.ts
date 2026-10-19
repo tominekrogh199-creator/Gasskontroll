@@ -71,6 +71,8 @@ export interface Facility {
   history: ReportHistory[];
   log: LogEntry[];
   adhoc?: boolean;
+  /** Anlegget dekkes av besøket til dette anlegget (samme adresse, ett stopp). */
+  mergedInto?: string | null;
 }
 
 export type ControlStatus = 'ikke_planlagt' | 'planlagt' | 'varslet' | 'bekreftet' | 'utfort' | 'utsatt';

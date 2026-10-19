@@ -1,13 +1,14 @@
-// De åtte akseptansetestene, kjørt mot domenelogikken (samme kode som appen bruker).
+// Akseptansetester mot domenelogikken (samme kode som appen bruker).
 import { describe, it, expect } from 'vitest';
 import { buildDemo, defaultSettings } from '../src/data/demo';
-import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf } from '../src/domain/planner';
-import { addDays, addQuarters, firstWorkdayOfQuarter, isOverdue, quarterOf, fmtDateWeekday } from '../src/domain/dates';
+import { makePlan, dayTimeline, fillSuggestions, dayArea, dayRouteUrl, googleStopUrl, stopOf, refreshDay, dayHasRoom, earliestPlanDate, earliestOverdueDate, durationOf } from '../src/domain/planner';
+import { addDays, addQuarters, firstWorkdayOfQuarter, isOverdue, quarterOf, fmtDateWeekday, minutesToClock, clockToMinutes, compareQuarter } from '../src/domain/dates';
 import { homeStats, sortedDays } from '../src/domain/selectors';
-import { complete, facilityOf, pinColor, postpone, recipient, todayOf } from '../src/domain/controls';
+import { complete, currentControl, facilityOf, pinColor, postpone, recipient, todayOf } from '../src/domain/controls';
 import { callList, markSent, reminderSendDate, runAutomations, draftsToApprove } from '../src/domain/notices';
 import { parseReport } from '../src/domain/reportParser';
 import { EXAMPLE_REPORT, facilityFromReport, importFacility } from '../src/domain/importer';
+import { mergeIntoOneVisit, sameAddressOf, sameAddressPairs } from '../src/domain/merge';
 import { tankRequalYear } from '../src/domain/selectors';
 import type { AppState } from '../src/domain/types';
 
@@ -186,5 +187,108 @@ describe('8. Ingen svar', () => {
     fv.sentAt = `${addDays(todayOf(st.settings), -6)}T08:00`;
     runAutomations(st);
     expect(c.notices.some((n) => n.kind === 'purring')).toBe(false);
+  });
+});
+
+describe('Delt klokke', () => {
+  it('tidsrommet er besøkets lengde etter kjøretiden, ikke et fast totimersvindu', () => {
+    const st = demoAt('2026-10-19');
+    const day = st.days[0];
+    for (const id of day.stops) {
+      const c = st.controls.find((x) => x.id === id)!;
+      c.timeFrom = null;
+      c.timeTo = null;
+    }
+    refreshDay(st, day);
+    const tl = dayTimeline(st, day);
+    for (const id of day.stops) {
+      const c = st.controls.find((x) => x.id === id)!;
+      const slot = tl.slots[id];
+      const visit = durationOf(facilityOf(st, c), st.settings);
+      expect(c.timeFrom).toBe(minutesToClock(slot.start));
+      expect(c.timeTo).toBe(minutesToClock(slot.end));
+      expect(clockToMinutes(c.timeTo!) - clockToMinutes(c.timeFrom!)).toBe(visit);
+      expect(visit).not.toBe(120);
+    }
+  });
+});
+
+describe('Forfalte tidlig', () => {
+  it('legger allerede forfalte på første ledige dager, med kort varsel', () => {
+    const today = '2026-10-19';
+    const st = demoAt(today);
+    const before = new Set(st.days.map((d) => d.id));
+    const q = quarterOf(today);
+    makePlan(st, q);
+    const notice = earliestPlanDate(st);
+    const first = earliestOverdueDate(st);
+    const fresh = st.days.filter((d) => !before.has(d.id));
+    const overdueStop = (id: string) => {
+      const c = st.controls.find((x) => x.id === id)!;
+      return isOverdue(c.due, today) || compareQuarter(c.due, q) < 0;
+    };
+    const earlyDays = fresh.filter((d) => d.date < notice);
+    expect(earlyDays.length).toBeGreaterThan(0);
+    for (const d of earlyDays) {
+      expect(d.date > today).toBe(true);
+      expect(d.date >= first).toBe(true);
+      expect(d.stops.some(overdueStop)).toBe(true);
+      expect(d.stops.some((id) => st.controls.find((x) => x.id === id)!.log.some((l) => l.text.includes('kort varsel')))).toBe(true);
+    }
+    for (const d of fresh) {
+      if (!d.stops.some(overdueStop)) expect(d.date >= notice).toBe(true);
+    }
+  });
+});
+
+describe('Ledig plass', () => {
+  it('krever tid igjen i arbeidsdagen, ikke bare en ledig plass i listen', () => {
+    const st = demoAt('2026-10-19');
+    const day = st.days[0];
+    const end = dayTimeline(st, day).endMin;
+    expect(dayHasRoom(st, day)).toBe(true);
+    st.settings.dayEnd = minutesToClock(end + 30);
+    expect(dayHasRoom(st, day)).toBe(false);
+    st.settings.dayEnd = minutesToClock(end + st.settings.controlMin + 30);
+    expect(dayHasRoom(st, day)).toBe(true);
+  });
+});
+
+describe('Samme adresse', () => {
+  it('ulikt Objekt ID på samme adresse blir ett besøk', () => {
+    const st = demoAt('2026-10-19');
+    const keep = st.facilities[1];
+    const drop = st.facilities[0];
+    drop.address = { ...keep.address };
+    expect(sameAddressOf(st, drop)?.id).toBe(keep.id);
+    expect(sameAddressPairs(st).some((p) => p.a.id === drop.id || p.b.id === drop.id)).toBe(true);
+    const merged = mergeIntoOneVisit(st, drop.id, keep.id);
+    expect(merged.keepId).toBe(keep.id);
+    expect(drop.mergedInto).toBe(keep.id);
+    makePlan(st, quarterOf('2026-10-19'));
+    const stops = st.days.flatMap((d) => d.stops);
+    expect(stops).toContain(currentControl(st, keep.id)!.id);
+    expect(stops).not.toContain(currentControl(st, drop.id)!.id);
+  });
+});
+
+describe('Ny rapport lukker kontrollen', () => {
+  it('ny frist setter gammel kontroll til utført og åpner neste', () => {
+    const today = '2026-10-19';
+    const st = demoAt(today);
+    const open = st.controls.find((c) => c.status === 'ikke_planlagt' && (facilityOf(st, c).reportDate ?? '') < '2026-10-18')!;
+    const f = facilityOf(st, open);
+    const incoming = structuredClone(f);
+    incoming.reportDate = '2026-10-18';
+    incoming.lastControl = '2026-10-18';
+    incoming.nextDue = { q: 4, year: 2030 };
+    incoming.sourceFile = 'ny-rapport.pdf';
+    const r = importFacility(st, incoming);
+    expect(open.status).toBe('utfort');
+    const cur = currentControl(st, f.id)!;
+    expect(cur.id).not.toBe(open.id);
+    expect(cur.status).toBe('ikke_planlagt');
+    expect(cur.due).toEqual({ q: 4, year: 2030 });
+    expect(r.message).toContain('utført');
   });
 });

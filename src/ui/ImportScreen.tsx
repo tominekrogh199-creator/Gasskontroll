@@ -8,6 +8,7 @@ import { newControl, recipient, todayOf } from '../domain/controls';
 import { addQuarters, fmtDate, fmtQuarter, parseNorDate, quarterOf } from '../domain/dates';
 import { tankRequalYear } from '../domain/selectors';
 import { geocode } from '../adapters/geocode';
+import { mergeIntoOneVisit, sameAddressOf, sameAddressPairs } from '../domain/merge';
 
 interface Job { name: string; status: 'venter' | 'leser' | 'ferdig' | 'feil'; msg: string; facilityId?: string; review?: boolean }
 
@@ -38,7 +39,8 @@ function PdfImport() {
     const f = facilityFromReport(out.parsed, 'eksempelrapport (Prøv import)', today);
     const r = update((s) => importFacility(s, f));
     setTrial(getState().facilities.find((x) => x.id === r.facility.id) ?? f);
-    nav.toast(out.aiError ? `AI feilet (${out.aiError}) – brukte regelbasert uttrekk` : r.message);
+    const twin = sameAddressOf(getState(), getState().facilities.find((x) => x.id === r.facility.id) ?? f);
+    nav.toast((out.aiError ? `AI feilet (${out.aiError}) – brukte regelbasert uttrekk` : r.message) + (twin ? ` Samme adresse som ${twin.customer}.` : ''));
   };
 
   const run = async (files: File[]) => {
@@ -58,7 +60,8 @@ function PdfImport() {
           const out = await extractReport(text, getState().settings);
           const f = facilityFromReport(out.parsed, files[i].name, today);
           const r = update((s) => importFacility(s, f));
-          list[i] = { ...list[i], status: 'ferdig', msg: r.message + (out.aiError ? ` · AI feilet: ${out.aiError}` : out.usedAI ? ' · AI' : ''), facilityId: r.facility.id, review: f.reviewPending };
+          const twin = sameAddressOf(getState(), getState().facilities.find((x) => x.id === r.facility.id) ?? r.facility);
+          list[i] = { ...list[i], status: 'ferdig', msg: r.message + (twin ? ` · samme adresse som ${twin.customer}` : '') + (out.aiError ? ` · AI feilet: ${out.aiError}` : out.usedAI ? ' · AI' : ''), facilityId: r.facility.id, review: f.reviewPending };
         } catch (e: any) {
           list[i] = { ...list[i], status: 'feil', msg: e?.message ?? String(e) };
         }
@@ -108,25 +111,29 @@ function PdfImport() {
 }
 
 function TrialResult({ f }: { f: Facility }) {
+  const state = useAppState();
   const nav = useNav();
-  const r = recipient(f);
+  const live = state.facilities.find((x) => x.id === f.id) ?? f;
+  const twin = sameAddressOf(state, live);
+  const r = recipient(live);
   return (
     <div class="mt12">
       <dl class="kv small">
-        <dt>Objekt ID</dt><dd>{f.objectId}</dd>
-        <dt>Neste frist</dt><dd>{fmtQuarter(f.nextDue)}</dd>
-        <dt>Adresse</dt><dd>{f.address.street}, {f.address.postcode} {f.address.place}</dd>
-        <dt>Gnr./bnr.</dt><dd>{f.gnr} / {f.bnr}</dd>
+        <dt>Objekt ID</dt><dd>{live.objectId}</dd>
+        <dt>Neste frist</dt><dd>{fmtQuarter(live.nextDue)}</dd>
+        <dt>Adresse</dt><dd>{live.address.street}, {live.address.postcode} {live.address.place}</dd>
+        <dt>Gnr./bnr.</dt><dd>{live.gnr} / {live.bnr}</dd>
         <dt>Mottaker</dt><dd>{r ? `${r.contact.email} (${r.reason})` : '–'}</dd>
-        <dt>Siste kontroll</dt><dd>{fmtDate(f.lastControl)}</dd>
-        <dt>Rekvalifisering</dt><dd>{tankRequalYear(f.tank?.inServiceYear) ?? '–'} <span class="muted">(anbefalt, vanligvis ved 18 år)</span></dd>
-        <dt>Servicepartner</dt><dd>{f.servicePartner ?? '–'}</dd>
-        <dt>Avvik</dt><dd>{f.deviations.filter((d) => d.severity === 'avvik').length} åpne, {f.deviations.filter((d) => d.severity === 'anbefaling').length} anbefalinger</dd>
+        <dt>Siste kontroll</dt><dd>{fmtDate(live.lastControl)}</dd>
+        <dt>Rekvalifisering</dt><dd>{tankRequalYear(live.tank?.inServiceYear) ?? '–'} <span class="muted">(anbefalt, vanligvis ved 18 år)</span></dd>
+        <dt>Servicepartner</dt><dd>{live.servicePartner ?? '–'}</dd>
+        <dt>Avvik</dt><dd>{live.deviations.filter((d) => d.severity === 'avvik').length} åpne, {live.deviations.filter((d) => d.severity === 'anbefaling').length} anbefalinger</dd>
       </dl>
-      {f.flags.length > 0 && <div class="note warn">{f.flags.map((x) => <div>⚑ {x}</div>)}</div>}
+      {live.flags.length > 0 && <div class="note warn">{live.flags.map((x) => <div>⚑ {x}</div>)}</div>}
+      {twin && <button class="btn block mt8" onClick={() => { update((s) => mergeIntoOneVisit(s, live.id, twin.id)); nav.toast(`Slått sammen med ${twin.customer} til ett besøk`); }}>Slå sammen med {twin.customer}</button>}
       <div class="btnrow mt8">
-        <button class="btn small" onClick={() => nav.push({ kind: 'review', id: f.id })}>Gjennomgang</button>
-        <button class="btn small" onClick={() => nav.push({ kind: 'facility', id: f.id })}>Anleggskort</button>
+        <button class="btn small" onClick={() => nav.push({ kind: 'review', id: live.id })}>Gjennomgang</button>
+        <button class="btn small" onClick={() => nav.push({ kind: 'facility', id: live.id })}>Anleggskort</button>
       </div>
     </div>
   );
@@ -171,7 +178,8 @@ function CsvImport() {
                   importFacility(s, f); n++; if (f.reviewPending) rev++;
                 }
               });
-              setDone(`${n} anlegg importert, ${rev} til gjennomgang.`);
+              const pairs = sameAddressPairs(getState()).length;
+              setDone(`${n} anlegg importert, ${rev} til gjennomgang.${pairs ? ` ${pairs} par har samme adresse – slå dem sammen under Anlegg.` : ''}`);
             }}>Importer</button>
             {(map.objectId === undefined || map.nextDue === undefined) && <div class="muted small mt8">Objekt ID og neste frist må kobles.</div>}
             {done && <div class="note mt8">{done} <button class="btn small" onClick={() => nav.push({ kind: 'review' })}>Gjennomgang</button></div>}

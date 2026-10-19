@@ -13,6 +13,15 @@ import { SettingsScreen } from './Settings';
 import { RouteScreen } from './RouteScreen';
 import { Sheets } from './Sheets';
 import { draftsToApprove, lateDrafts, callList } from '../domain/notices';
+import { todayOf } from '../domain/controls';
+import { sortedDays } from '../domain/selectors';
+import type { AppState } from '../domain/types';
+
+function initialMapDay(state: AppState): string | null {
+  const today = todayOf(state.settings);
+  const days = sortedDays(state).filter((d) => d.stops.length > 0);
+  return (days.find((d) => d.date === today) ?? days.find((d) => d.date >= today))?.id ?? null;
+}
 
 export function App() {
   const state = useAppState();
@@ -20,7 +29,7 @@ export function App() {
   const [stack, setStack] = useState<Screen[]>([]);
   const [sheet, setSheet] = useState<SheetSpec | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [mapDay, setMapDay] = useState<string | null>(null);
+  const [mapDay, setMapDay] = useState<string | null>(() => initialMapDay(state));
   const [placing, setPlacing] = useState<string | null>(null);
 
   const nav: Nav = useMemo(
